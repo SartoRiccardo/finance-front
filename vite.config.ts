@@ -11,6 +11,7 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
+      devOptions: { enabled: true },
       manifest: {
         name: 'Personal Finance',
         short_name: 'Finance',
