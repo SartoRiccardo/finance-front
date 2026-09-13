@@ -1,7 +1,7 @@
 import { useRef, useState, type ChangeEvent } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { Camera, ImagePlus, Loader2, Pencil, ScanLine, Trash2, X } from 'lucide-react'
+import { Camera, ImagePlus, Loader2, Pencil, ScanLine, Trash2 } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
 import { money } from '@/lib/money'
 import { cn } from '@/lib/utils'
@@ -368,22 +368,21 @@ function RowFields({
   }
 
   return (
-    <div className="grid grid-cols-[7.5rem_1fr_2.75rem] items-start gap-1.5 rounded-lg border bg-card p-2">
-      <input type="date" required aria-label="Date" className={cn(field, 'tabular-nums')} value={values.date} onChange={set('date')} onBlur={() => commit(values)} />
-      <select aria-label="Category" required className={field} value={values.category_id} onChange={(e) => { set('category_id')(e); commit({ ...values, category_id: e.target.value }) }}>
-        <option value="" disabled>
-          Category…
-        </option>
-        {categories.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.name}
+    <div className="space-y-1.5 rounded-lg border bg-card p-2">
+      <div className="grid grid-cols-2 gap-1.5">
+        <input type="date" required aria-label="Date" className={cn(field, 'tabular-nums')} value={values.date} onChange={set('date')} onBlur={() => commit(values)} />
+        <select aria-label="Category" required className={field} value={values.category_id} onChange={(e) => { set('category_id')(e); commit({ ...values, category_id: e.target.value }) }}>
+          <option value="" disabled>
+            Category…
           </option>
-        ))}
-      </select>
-      <Button variant="ghost" size="icon" className="size-11 text-muted-foreground" aria-label="Done editing" onClick={onCollapse}>
-        <X aria-hidden />
-      </Button>
-      <div className="col-span-2 grid grid-cols-[1fr_6rem] gap-1.5">
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="grid grid-cols-[1fr_6rem] gap-1.5">
         <input
           required
           maxLength={200}
@@ -414,6 +413,16 @@ function RowFields({
           }}
         />
       </div>
+      <Button
+        variant="ghost"
+        className="h-7 w-full text-xs text-muted-foreground"
+        onClick={() => {
+          setValues(saved)
+          onCollapse()
+        }}
+      >
+        Cancel
+      </Button>
     </div>
   )
 }
