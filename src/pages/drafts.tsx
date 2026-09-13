@@ -23,9 +23,10 @@ type Draft = {
 type RowValues = { date: string; description: string; amount: string; category_id: string }
 type RowBody = { date: string; description: string; amount: string; direction: 'spend'; category_id: number }
 
-// 16px: iOS Safari zooms focused inputs below 16px.
+// 16px: iOS Safari zooms focused inputs below 16px. min-w-0: iOS date inputs have an
+// intrinsic width and grid items can't shrink below min-content without it → overlap.
 const field =
-  'h-10 w-full rounded-md border border-input bg-transparent px-3 text-base outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50'
+  'h-10 w-full min-w-0 rounded-md border border-input bg-transparent px-3 text-base outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50'
 const MAX_BYTES = 10 * 1024 * 1024
 const dtFmt = new Intl.DateTimeFormat('it-IT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 const pad = (n: number) => String(n).padStart(2, '0')
