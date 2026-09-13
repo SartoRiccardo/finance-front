@@ -1,12 +1,15 @@
 import type { ComponentType, ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
-import { LayoutDashboard } from 'lucide-react'
+import { ArrowLeftRight, LayoutDashboard } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export type NavItem = { path: string; icon: ComponentType<{ className?: string }>; label: string }
 
 // Add future sections here — shell and routing pick them up, no per-page edits.
-export const NAV: NavItem[] = [{ path: '/', icon: LayoutDashboard, label: 'Dashboard' }]
+export const NAV: NavItem[] = [
+  { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
+  { path: '/transactions', icon: ArrowLeftRight, label: 'Transactions' },
+]
 
 function NavLinks({ className }: { className?: string }) {
   return (

@@ -10,6 +10,7 @@ import { queryClient } from '@/query-client'
 import { AppShell } from '@/components/shell'
 import { LoginPage } from '@/pages/login'
 import { DashboardPage } from '@/pages/dashboard'
+import { TransactionsPage } from '@/pages/transactions'
 
 const rootRoute = createRootRoute({ component: () => <Outlet /> })
 
@@ -19,23 +20,37 @@ const loginRoute = createRoute({
   component: LoginPage,
 })
 
+// Shell routes share this guard — 401 on /auth/me goes to login.
+const requireAuth = async () => {
+  try {
+    await queryClient.fetchQuery({
+      queryKey: ['me'],
+      queryFn: () => api<{ email: string }>('/auth/me'),
+    })
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 401) throw redirect({ to: '/login' })
+    throw e
+  }
+}
+
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
-  beforeLoad: async () => {
-    try {
-      await queryClient.fetchQuery({
-        queryKey: ['me'],
-        queryFn: () => api<{ email: string }>('/auth/me'),
-      })
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 401) throw redirect({ to: '/login' })
-      throw e
-    }
-  },
+  beforeLoad: requireAuth,
   component: () => (
     <AppShell>
       <DashboardPage />
+    </AppShell>
+  ),
+})
+
+const transactionsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/transactions',
+  beforeLoad: requireAuth,
+  component: () => (
+    <AppShell>
+      <TransactionsPage />
     </AppShell>
   ),
 })
@@ -49,7 +64,7 @@ const catchAllRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([loginRoute, indexRoute, catchAllRoute])
+const routeTree = rootRoute.addChildren([loginRoute, indexRoute, transactionsRoute, catchAllRoute])
 
 export const router = createRouter({ routeTree })
 
