@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { CirclePlus, Pencil, Trash2 } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
@@ -7,9 +7,10 @@ import { money, type Direction } from '@/lib/money'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Sheet } from '@/components/ui/sheet'
+import { ColorEditor } from '@/components/color-editor'
 
-type Category = { id: number; name: string; description: string | null; is_investment: boolean }
-type Label = { id: number; name: string }
+type Category = { id: number; name: string; description: string | null; is_investment: boolean; color: string | null }
+type Label = { id: number; name: string; color: string | null }
 type Tx = {
   id: number
   date: string
@@ -22,15 +23,21 @@ type Tx = {
 // id set ⇒ PATCH, missing ⇒ POST; amount as decimal string.
 type TxInput = Omit<Tx, 'id' | 'amount'> & { id?: number; amount: string }
 type TxPage = { items: Tx[]; total: number }
+type InfTx = { pages: TxPage[]; pageParams: unknown[] }
 
+const PAGE_SIZE = 50
+
+// 16px: iOS Safari zooms focused inputs below 16px.
 const field =
-  'h-10 w-full rounded-md border border-input bg-transparent px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50'
+  'h-10 w-full rounded-md border border-input bg-transparent px-3 text-base outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50'
 const dayFmt = new Intl.DateTimeFormat('it-IT', { day: '2-digit', month: 'short' })
 const monthFmt = new Intl.DateTimeFormat('it-IT', { month: 'short', year: 'numeric' })
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
 // Local-date helpers: `new Date('YYYY-MM-DD')` parses as UTC and shifts the day.
 const pad = (n: number) => String(n).padStart(2, '0')
 const day = (iso: string) => new Date(`${iso}T00:00:00`)
+const dayLabel = (iso: string) => cap(dayFmt.format(day(iso)))
 const TODAY = () => {
   const d = new Date()
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
@@ -43,7 +50,7 @@ const MONTHS = Array.from({ length: 12 }, (_, i) => {
   const d = new Date()
   d.setDate(1)
   d.setMonth(d.getMonth() - i)
-  return { value: `${d.getFullYear()}-${pad(d.getMonth() + 1)}`, label: monthFmt.format(d) }
+  return { value: `${d.getFullYear()}-${pad(d.getMonth() + 1)}`, label: cap(monthFmt.format(d)) }
 })
 
 export function TransactionsPage() {
@@ -51,8 +58,8 @@ export function TransactionsPage() {
   const [categoryId, setCategoryId] = useState('')
   const [direction, setDirection] = useState('')
   const [editing, setEditing] = useState<Tx | 'new' | null>(null)
+  const [colorsOpen, setColorsOpen] = useState(false)
 
-  // ponytail: API default limit is 50/page — add a pager if a month overflows.
   const params = new URLSearchParams()
   if (month) {
     params.set('from', `${month}-01`)
@@ -60,23 +67,40 @@ export function TransactionsPage() {
   }
   if (categoryId) params.set('category_id', categoryId)
   if (direction) params.set('direction', direction)
-  const key = ['transactions', params.toString()]
+  const qs = params.toString()
+  const key = ['transactions', qs]
 
-  const tx = useQuery({ queryKey: key, queryFn: () => api<TxPage>(`/transactions?${params}`) })
+  // Infinite scroll: API pages at 50; the sentinel below auto-loads more.
+  const tx = useInfiniteQuery({
+    queryKey: key,
+    queryFn: ({ pageParam }) =>
+      api<TxPage>(`/transactions?${qs}${qs ? '&' : ''}limit=${PAGE_SIZE}&offset=${pageParam}`),
+    initialPageParam: 0,
+    getNextPageParam: (last, all) => {
+      const loaded = all.reduce((n, p) => n + p.items.length, 0)
+      return loaded < last.total ? loaded : undefined
+    },
+  })
   const categories = useQuery({ queryKey: ['categories'], queryFn: () => api<Category[]>('/categories') })
   const labels = useQuery({ queryKey: ['labels'], queryFn: () => api<Label[]>('/labels') })
 
   const qc = useQueryClient()
   const fail = (e: unknown) => toast.error(e instanceof ApiError ? e.message : 'Something went wrong')
+  const setPages = (fn: (p: TxPage) => TxPage) => {
+    const prev = qc.getQueryData<InfTx>(key)
+    if (prev) qc.setQueryData<InfTx>(key, { ...prev, pages: prev.pages.map(fn) })
+    return prev
+  }
 
   const remove = useMutation({
     mutationFn: (id: number) => api(`/transactions/${id}`, { method: 'DELETE' }),
     onMutate: async (id) => {
       await qc.cancelQueries({ queryKey: key })
-      const prev = qc.getQueryData<TxPage>(key)
-      if (prev)
-        qc.setQueryData(key, { ...prev, items: prev.items.filter((t) => t.id !== id), total: prev.total - 1 })
-      return prev
+      return setPages((p) =>
+        p.items.some((t) => t.id === id)
+          ? { ...p, items: p.items.filter((t) => t.id !== id), total: p.total - 1 }
+          : p,
+      )
     },
     onError: (e, _id, prev) => {
       if (prev) qc.setQueryData(key, prev)
@@ -92,14 +116,13 @@ export function TransactionsPage() {
         : api('/transactions', { method: 'POST', body: JSON.stringify(t) }),
     onMutate: async (t) => {
       await qc.cancelQueries({ queryKey: key })
-      const prev = qc.getQueryData<TxPage>(key)
-      if (prev) {
-        const items = t.id
-          ? prev.items.map((x) => (x.id === t.id ? { ...x, ...t } : x))
-          : [{ ...t, id: -Date.now() } as Tx, ...prev.items]
-        qc.setQueryData(key, { items, total: t.id ? prev.total : prev.total + 1 })
-      }
-      return prev
+      return setPages((p) => {
+        if (t.id)
+          return p.items.some((x) => x.id === t.id)
+            ? { ...p, items: p.items.map((x) => (x.id === t.id ? { ...x, ...t } : x)) }
+            : p
+        return { ...p, items: [{ ...t, id: -Date.now() } as Tx, ...p.items], total: p.total + 1 }
+      })
     },
     onError: (e, _t, prev) => {
       if (prev) qc.setQueryData(key, prev)
@@ -119,7 +142,14 @@ export function TransactionsPage() {
     if (!item) return null
     return (
       <>
-        <span className="max-w-40 truncate rounded-full bg-secondary px-2 py-0.5 text-xs text-secondary-foreground">
+        <span className="inline-flex max-w-40 items-center gap-1.5 truncate rounded-full bg-secondary px-2 py-0.5 text-xs text-secondary-foreground">
+          {item.color && (
+            <span
+              aria-hidden
+              className="size-2 shrink-0 rounded-full border border-black/10"
+              style={{ backgroundColor: item.color }}
+            />
+          )}
           {item.name}
         </span>
         {'is_investment' in item && item.is_investment && (
@@ -146,7 +176,20 @@ export function TransactionsPage() {
     </div>
   )
 
-  const items = tx.data?.items ?? []
+  const sentinel = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = sentinel.current
+    if (!el || !tx.hasNextPage || !tx.fetchNextPage) return
+    const io = new IntersectionObserver(
+      (entries) => entries[0]?.isIntersecting && tx.fetchNextPage(),
+      { rootMargin: '400px' },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [tx.hasNextPage, tx.fetchNextPage, qs])
+
+  const items = tx.data?.pages.flatMap((p) => p.items) ?? []
+  const total = tx.data?.pages[0]?.total ?? 0
   return (
     <div className="p-4 pb-24">
       <h1 className="text-xl font-semibold">Transactions</h1>
@@ -184,16 +227,25 @@ export function TransactionsPage() {
           <option value="earn">Earnings</option>
         </select>
       </div>
-      <p aria-live="polite" className="mt-2 text-xs text-muted-foreground">
-        {tx.isPending ? 'Loading…' : tx.isError ? 'Could not load transactions.' : `${tx.data?.total ?? 0} transactions`}
-      </p>
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <p aria-live="polite" className="text-xs text-muted-foreground">
+          {tx.isPending ? 'Loading…' : tx.isError ? 'Could not load transactions.' : `${total} transactions`}
+        </p>
+        <Button
+          variant="ghost"
+          className="h-7 shrink-0 px-2 text-xs text-muted-foreground"
+          onClick={() => setColorsOpen(true)}
+        >
+          Colors
+        </Button>
+      </div>
 
       <div className="mt-3 space-y-2 md:hidden">
         {items.map((t) => (
           <article key={t.id} className="flex items-center gap-2 rounded-lg border bg-card p-3">
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline gap-2">
-                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{dayFmt.format(day(t.date))}</span>
+                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{dayLabel(t.date)}</span>
                 <p className="truncate text-sm font-medium">{t.description}</p>
               </div>
               <div className="mt-1.5 flex items-center gap-1.5">{chip(t)}</div>
@@ -222,7 +274,7 @@ export function TransactionsPage() {
           <tbody>
             {items.map((t) => (
               <tr key={t.id} className="border-b">
-                <td className="py-2 tabular-nums">{dayFmt.format(day(t.date))}</td>
+                <td className="py-2 tabular-nums">{dayLabel(t.date)}</td>
                 <td className="py-2">{t.description}</td>
                 <td className="py-2">
                   <span className="flex items-center gap-1.5">{chip(t)}</span>
@@ -240,6 +292,10 @@ export function TransactionsPage() {
       {!tx.isPending && !tx.isError && items.length === 0 && (
         <p className="mt-6 text-sm text-muted-foreground">No transactions here yet.</p>
       )}
+
+      <div ref={sentinel} className="min-h-10 pt-3 text-center text-xs text-muted-foreground">
+        {tx.isFetchingNextPage && 'Loading…'}
+      </div>
 
       <Button
         aria-label="Add transaction"
@@ -265,6 +321,8 @@ export function TransactionsPage() {
           onCancel={() => setEditing(null)}
         />
       </Sheet>
+
+      <ColorEditor open={colorsOpen} onOpenChange={setColorsOpen} />
     </div>
   )
 }
@@ -290,7 +348,6 @@ function TxForm({
   const [amount, setAmount] = useState(tx ? String(tx.amount) : '')
   const [categoryId, setCategoryId] = useState(tx?.category_id ? String(tx.category_id) : '')
   const [labelId, setLabelId] = useState(tx?.label_id ? String(tx.label_id) : '')
-  const [catQ, setCatQ] = useState('')
   const [error, setError] = useState('')
 
   function submit(e: FormEvent) {
@@ -310,9 +367,6 @@ function TxForm({
       label_id: direction === 'earn' ? Number(refId) : null,
     })
   }
-
-  const q = catQ.trim().toLowerCase()
-  const catList = categories.filter((c) => c.name.toLowerCase().includes(q))
 
   return (
     <form onSubmit={submit}>
@@ -379,39 +433,27 @@ function TxForm({
         </div>
 
         {direction === 'spend' ? (
-          <fieldset>
-            <legend className="mb-1.5 text-sm font-medium">Category</legend>
-            <input
-              aria-label="Filter categories"
-              placeholder="Filter categories…"
-              autoComplete="off"
+          <div>
+            <label htmlFor="tx-category" className="mb-1.5 block text-sm font-medium">
+              Category
+            </label>
+            <select
+              id="tx-category"
+              required
               className={field}
-              value={catQ}
-              onChange={(e) => setCatQ(e.target.value)}
-            />
-            <ul role="listbox" aria-label="Categories" className="mt-2 max-h-48 space-y-1 overflow-y-auto">
-              {catList.map((c) => (
-                <li key={c.id}>
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={categoryId === String(c.id)}
-                    onClick={() => setCategoryId(String(c.id))}
-                    className={cn(
-                      'flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
-                      categoryId === String(c.id) && 'border-primary bg-accent',
-                    )}
-                  >
-                    <span className="min-w-0 flex-1 truncate">{c.name}</span>
-                    {c.is_investment && (
-                      <span className="rounded-full border px-1.5 py-0.5 text-xs text-muted-foreground">Investment</span>
-                    )}
-                  </button>
-                </li>
+              value={categoryId}
+              onChange={(e) => setCategoryId(e.target.value)}
+            >
+              <option value="" disabled>
+                Select a category…
+              </option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
               ))}
-            </ul>
-            {catList.length === 0 && <p className="mt-2 text-sm text-muted-foreground">No matching category.</p>}
-          </fieldset>
+            </select>
+          </div>
         ) : (
           <div>
             <label htmlFor="tx-label" className="mb-1.5 block text-sm font-medium">

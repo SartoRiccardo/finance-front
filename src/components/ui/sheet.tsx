@@ -23,7 +23,7 @@ export function Sheet({
         <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50 animate-in fade-in" />
         <DialogPrimitive.Content
           className={cn(
-            'fixed inset-x-0 bottom-0 z-50 max-h-[90dvh] overflow-y-auto rounded-t-xl border-t bg-background p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg outline-none',
+            'fixed inset-x-0 bottom-0 z-50 max-h-[90dvh] overflow-y-auto overflow-x-hidden rounded-t-xl border-t bg-background p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg outline-none',
             'animate-in slide-in-from-bottom-10 fade-in duration-200',
             'md:inset-x-auto md:bottom-auto md:top-1/2 md:left-1/2 md:w-full md:max-w-md md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-lg md:border md:p-6',
             'md:animate-in md:slide-in-from-bottom-0 md:zoom-in-95',
