@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api, ApiError } from '@/lib/api'
 import { money } from '@/lib/money'
 import { cn } from '@/lib/utils'
@@ -35,13 +36,19 @@ const COLS = [
   { label: 'Earned', k: 'earned' },
   { label: 'Total', k: 'monthly_total' },
   { label: 'Liquid', k: 'monthly_liquid' },
-  { label: 'Cum. total', k: 'cum_total', cum: true },
-  { label: 'Cum. liquid', k: 'cum_liquid', cum: true },
+  { label: 'Running total', k: 'cum_total', cum: true },
+  { label: 'Running liquid', k: 'cum_liquid', cum: true },
 ] as const
 
 // 16px: iOS Safari zooms focused inputs below 16px.
 const yearField =
   'h-10 rounded-md border border-input bg-transparent px-3 text-base outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50'
+
+// CVD-validated pairs (dataviz validator): spent/invested pass all checks on
+// both surfaces. The running line is theme ink on purpose — it's the
+// spreadsheet's pencil line, not a categorical series (identity via legend).
+const MODES = { spend: 'Spend', liquid: 'Liquid', total: 'Total' } as const
+type Mode = keyof typeof MODES
 
 // Spreadsheet convention: zero renders as —, negatives keep the minus sign (red tint).
 const value = (v: Cell) => {
@@ -49,17 +56,9 @@ const value = (v: Cell) => {
   return <span className={cn('tabular-nums', n < 0 && 'text-destructive')}>{n === 0 ? '—' : money(n)}</span>
 }
 
-function Row({ label, v }: { label: string; v: Cell }) {
-  return (
-    <div className="flex items-baseline justify-between gap-2">
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd>{value(v)}</dd>
-    </div>
-  )
-}
-
 export function DashboardPage() {
   const [year, setYear] = useState(new Date().getFullYear())
+  const [mode, setMode] = useState<Mode>('spend')
   // Cache key includes the year — each year has its own entry.
   const yearly = useQuery({
     queryKey: ['reports', 'yearly', year],
@@ -67,8 +66,15 @@ export function DashboardPage() {
   })
   const totals = yearly.data?.totals
   const months = yearly.data?.months ?? []
-  const monthly = COLS.filter((c) => !('cum' in c))
-  const cums = COLS.filter((c) => 'cum' in c)
+  const chartData = months.map((m) => ({
+    name: monthLabel(m.month),
+    spent: Number(m.spent),
+    invested: Number(m.invested),
+    liquid: Number(m.monthly_liquid),
+    runLiquid: Number(m.cum_liquid),
+    total: Number(m.monthly_total),
+    runTotal: Number(m.cum_total),
+  }))
 
   return (
     <div className="p-4">
@@ -123,60 +129,124 @@ export function DashboardPage() {
         </div>
       )}
 
-      {/* Mobile: one card per month; cumulative block tinted to read as a group. */}
-      <div className="mt-3 grid gap-2 md:hidden">
-        {months.map((m) => (
-          <article key={m.month} className="rounded-lg border bg-card p-3">
-            <h2 className="text-sm font-medium">{monthLabel(m.month)}</h2>
-            <dl className="mt-2 space-y-1">
-              {monthly.map((c) => (
-                <Row key={c.k} label={c.label} v={m[c.k]} />
-              ))}
-              <div className="mt-2 space-y-1 rounded-md bg-muted/60 px-2 py-1.5">
-                {cums.map((c) => (
-                  <Row key={c.k} label={c.label} v={m[c.k]} />
-                ))}
-              </div>
-            </dl>
-          </article>
-        ))}
-      </div>
+      {/* Graph above the table: pick a mode, then scan the numbers. */}
+      {months.length > 0 && (
+        <section className="mt-3">
+          <div role="radiogroup" aria-label="Graph" className="grid max-w-xs grid-cols-3 rounded-md border p-1">
+            {(Object.keys(MODES) as Mode[]).map((m) => (
+              <button
+                key={m}
+                type="button"
+                role="radio"
+                aria-checked={mode === m}
+                onClick={() => setMode(m)}
+                className={cn(
+                  'min-h-9 rounded-sm text-sm font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                  mode === m ? 'bg-primary text-primary-foreground' : 'text-muted-foreground',
+                )}
+              >
+                {MODES[m]}
+              </button>
+            ))}
+          </div>
 
-      {/* Desktop: the spreadsheet table, cumulative columns tinted. */}
-      <div className="hidden md:block">
-        <div className="mt-3 overflow-x-auto rounded-lg border bg-card">
-          <table className="w-full text-sm">
-            <caption className="sr-only">Monthly breakdown for {year}</caption>
-            <thead>
-              <tr className="border-b text-left text-muted-foreground">
-                <th scope="col" className="sticky left-0 z-10 bg-card py-2 pl-3 pr-2 font-medium">
-                  Month
+          <div className="mt-3 h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={chartData} margin={{ top: 8, right: 4, bottom: 0, left: 0 }}>
+                <CartesianGrid vertical={false} stroke="var(--border)" />
+                <XAxis
+                  dataKey="name"
+                  tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
+                  tickLine={false}
+                  axisLine={{ stroke: 'var(--border)' }}
+                  interval={0}
+                />
+                <YAxis
+                  tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }}
+                  tickLine={false}
+                  axisLine={false}
+                  width={40}
+                  tickFormatter={(v: number) => Math.round(v).toLocaleString('it-IT')}
+                />
+                <Tooltip
+                  formatter={(v) => money(Number(v))}
+                  cursor={{ fill: 'var(--accent)' }}
+                  contentStyle={{
+                    background: 'var(--card)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 8,
+                    fontSize: 12,
+                  }}
+                  labelStyle={{ color: 'var(--foreground)', fontWeight: 600 }}
+                />
+                {/* Legend text in ink tokens, never the series color. */}
+                <Legend
+                  iconSize={8}
+                  wrapperStyle={{ fontSize: 12 }}
+                  formatter={(v) => <span className="text-muted-foreground">{v}</span>}
+                />
+                {mode === 'spend' && (
+                  <>
+                    {/* Stacked = monthly outflow with its composition; top segment rounds the stack. */}
+                    <Bar dataKey="spent" name="Spent" stackId="a" fill="#f43f5e" maxBarSize={28} />
+                    <Bar dataKey="invested" name="Invested" stackId="a" fill="#3b82f6" maxBarSize={28} radius={[4, 4, 0, 0]} />
+                  </>
+                )}
+                {mode === 'liquid' && (
+                  <>
+                    <Bar dataKey="liquid" name="Liquid" fill="#06b6d4" maxBarSize={28} />
+                    <Line dataKey="runLiquid" name="Running liquid" stroke="var(--foreground)" strokeWidth={2} dot={false} type="monotone" />
+                  </>
+                )}
+                {mode === 'total' && (
+                  <>
+                    <Bar dataKey="total" name="Total" fill="#8b5cf6" maxBarSize={28} />
+                    <Line dataKey="runTotal" name="Running total" stroke="var(--foreground)" strokeWidth={2} dot={false} type="monotone" />
+                  </>
+                )}
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </section>
+      )}
+
+      {/* The spreadsheet table itself — scrolls both axes; header row and
+          month column stay pinned. Opaque backgrounds where cells overlap. */}
+      <div className="mt-3 max-h-[60dvh] overflow-auto rounded-lg border bg-card">
+        <table className="w-full min-w-max text-sm">
+          <caption className="sr-only">Monthly breakdown for {year}</caption>
+          <thead>
+            <tr className="border-b text-left text-muted-foreground">
+              <th scope="col" className="sticky top-0 left-0 z-30 border-r bg-card py-2 pl-3 pr-3 font-medium">
+                Month
+              </th>
+              {COLS.map((c) => (
+                <th
+                  key={c.k}
+                  scope="col"
+                  className={cn(
+                    'sticky top-0 z-20 px-3 py-2 text-right font-medium whitespace-nowrap',
+                    'cum' in c ? 'bg-muted' : 'bg-card',
+                  )}
+                >
+                  {c.label}
                 </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {months.map((m) => (
+              <tr key={m.month} className="border-b last:border-b-0">
+                <td className="sticky left-0 z-10 border-r bg-card py-2 pl-3 pr-3 font-medium">{monthLabel(m.month)}</td>
                 {COLS.map((c) => (
-                  <th
-                    key={c.k}
-                    scope="col"
-                    className={cn('px-2 py-2 text-right font-medium', 'cum' in c && 'bg-muted/60')}
-                  >
-                    {c.label}
-                  </th>
+                  <td key={c.k} className={cn('px-3 py-2 text-right whitespace-nowrap', 'cum' in c && 'bg-muted/60')}>
+                    {value(m[c.k])}
+                  </td>
                 ))}
               </tr>
-            </thead>
-            <tbody>
-              {months.map((m) => (
-                <tr key={m.month} className="border-b last:border-b-0">
-                  <td className="sticky left-0 z-10 bg-card py-2 pl-3 pr-2 font-medium">{monthLabel(m.month)}</td>
-                  {COLS.map((c) => (
-                    <td key={c.k} className={cn('px-2 py-2 text-right', 'cum' in c && 'bg-muted/60')}>
-                      {value(m[c.k])}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   )
