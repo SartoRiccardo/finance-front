@@ -12,6 +12,7 @@ import { LoginPage } from '@/pages/login'
 import { DashboardPage } from '@/pages/dashboard'
 import { TransactionsPage } from '@/pages/transactions'
 import { InsightsPage } from '@/pages/insights'
+import { DraftsPage } from '@/pages/drafts'
 
 const rootRoute = createRootRoute({ component: () => <Outlet /> })
 
@@ -67,6 +68,17 @@ const insightsRoute = createRoute({
   ),
 })
 
+const draftsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/drafts',
+  beforeLoad: requireAuth,
+  component: () => (
+    <AppShell>
+      <DraftsPage />
+    </AppShell>
+  ),
+})
+
 // Any unknown path goes back to the guarded shell.
 const catchAllRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -76,7 +88,14 @@ const catchAllRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([loginRoute, indexRoute, transactionsRoute, insightsRoute, catchAllRoute])
+const routeTree = rootRoute.addChildren([
+  loginRoute,
+  indexRoute,
+  transactionsRoute,
+  insightsRoute,
+  draftsRoute,
+  catchAllRoute,
+])
 
 export const router = createRouter({ routeTree })
 

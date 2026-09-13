@@ -10,7 +10,8 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
   const res = await fetch(`/api${path}`, {
     credentials: 'include',
     ...init,
-    headers: { 'content-type': 'application/json', ...init?.headers },
+    // FormData must reach the browser unspoiled so it can set the multipart boundary.
+    headers: { ...(init?.body instanceof FormData ? {} : { 'content-type': 'application/json' }), ...init?.headers },
   })
   if (!res.ok) {
     if (res.status === 401 && location.pathname !== '/login') location.assign('/login')

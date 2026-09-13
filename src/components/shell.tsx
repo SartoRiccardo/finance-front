@@ -1,6 +1,6 @@
 import type { ComponentType, ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
-import { ArrowLeftRight, ChartPie, LayoutDashboard } from 'lucide-react'
+import { ArrowLeftRight, ChartPie, LayoutDashboard, ScanLine } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export type NavItem = { path: string; icon: ComponentType<{ className?: string }>; label: string }
@@ -10,6 +10,7 @@ export const NAV: NavItem[] = [
   { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { path: '/transactions', icon: ArrowLeftRight, label: 'Transactions' },
   { path: '/insights', icon: ChartPie, label: 'Insights' },
+  { path: '/drafts', icon: ScanLine, label: 'Drafts' },
 ]
 
 function NavLinks({ className }: { className?: string }) {
