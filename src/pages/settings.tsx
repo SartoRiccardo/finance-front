@@ -5,7 +5,15 @@ import { Check } from 'lucide-react'
 import { api } from '@/lib/api'
 
 type Settings = { llm_provider: string; llm_model: string }
-type ModelInfo = { id: string; name: string }
+type ModelInfo = { id: string; name: string; input_cost: number | null; output_cost: number | null }
+
+// Per-M-token USD: "free" for 0/0, "price n/a" when the catalog has no number.
+const cost = (m: ModelInfo) =>
+  m.input_cost == null || m.output_cost == null
+    ? 'price n/a'
+    : m.input_cost === 0 && m.output_cost === 0
+      ? 'free'
+      : `$${m.input_cost} in · $${m.output_cost} out per M tokens`
 
 // 16px: iOS Safari zooms focused inputs below 16px. h-11 = 44px tap target.
 const field =
@@ -108,7 +116,7 @@ export function SettingsPage() {
                   >
                     <span className="min-w-0">
                       <span className="block truncate text-sm font-medium">{m.name}</span>
-                      <span className="block truncate text-xs text-muted-foreground">{m.id}</span>
+                      <span className="block truncate text-xs text-muted-foreground">{cost(m)}</span>
                     </span>
                     {m.id === model && <Check className="size-4 shrink-0" aria-hidden />}
                   </button>
