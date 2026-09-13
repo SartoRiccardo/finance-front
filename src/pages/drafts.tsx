@@ -362,9 +362,11 @@ function RowFields({
       setValues((v) => ({ ...v, [k]: e.target.value }))
 
   const commit = (next: RowValues) => {
-    if (JSON.stringify(next) === JSON.stringify(saved)) return
+    if (JSON.stringify(next) === JSON.stringify(saved)) return true
     setSaved(next)
-    if (valid(next)) onCommit(next)
+    if (!valid(next)) return false
+    onCommit(next)
+    return true
   }
 
   return (
@@ -413,16 +415,27 @@ function RowFields({
           }}
         />
       </div>
-      <Button
-        variant="ghost"
-        className="h-7 w-full text-xs text-muted-foreground"
-        onClick={() => {
-          setValues(saved)
-          onCollapse()
-        }}
-      >
-        Cancel
-      </Button>
+      <div className="flex gap-1.5">
+        <Button
+          className="h-7 flex-1 text-xs"
+          onClick={() => {
+            if (commit(values)) onCollapse()
+            else toast.error('Fill in date, description, amount and category.')
+          }}
+        >
+          OK
+        </Button>
+        <Button
+          variant="ghost"
+          className="h-7 flex-1 text-xs text-muted-foreground"
+          onClick={() => {
+            setValues(saved)
+            onCollapse()
+          }}
+        >
+          Cancel
+        </Button>
+      </div>
     </div>
   )
 }
