@@ -5,7 +5,7 @@ import { Check } from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
-type Settings = { llm_provider: string; llm_model: string }
+type Settings = { llm_provider: string; llm_model: string; custom_prompt: string }
 type ModelInfo = { id: string; name: string; input_cost: number | null; output_cost: number | null }
 type Usage = {
   totals: { calls: number; input_tokens: number; output_tokens: number; cost_usd: string | null }
@@ -23,6 +23,7 @@ const cost = (m: ModelInfo) =>
 // 16px: iOS Safari zooms focused inputs below 16px. h-11 = 44px tap target.
 const field =
   'h-11 w-full rounded-md border border-input bg-transparent px-3 text-base outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50'
+const area = `${field.replace('h-11 ', '')} min-h-24 py-2`
 
 const fail = (e: unknown) => toast.error(e instanceof Error ? e.message : 'Something went wrong')
 
@@ -80,6 +81,12 @@ export function SettingsPage() {
   const [tab, setTab] = useState<'model' | 'costs'>('model')
   const [q, setQ] = useState('')
   const [search, setSearch] = useState('')
+  const [prompt, setPrompt] = useState('')
+
+  // The textarea edits a local copy; settings.data changing (load, refetch) re-syncs it.
+  useEffect(() => {
+    if (settings.data) setPrompt(settings.data.custom_prompt)
+  }, [settings.data])
 
   // ~300ms debounce: one request per pause in typing, not per keystroke.
   useEffect(() => {
@@ -108,7 +115,9 @@ export function SettingsPage() {
   })
   const list = (models.data ?? []).slice(0, 20)
 
-  const pick = (id: string) => id !== model && save.mutate({ llm_provider: provider, llm_model: id })
+  // Every save sends all three fields, so no save can silently drop another.
+  const pick = (id: string) =>
+    id !== model && save.mutate({ llm_provider: provider, llm_model: id, custom_prompt: prompt })
 
   return (
     <div className="p-4 pb-24">
@@ -150,7 +159,9 @@ export function SettingsPage() {
                   className={field}
                   value={provider}
                   disabled={save.isPending}
-                  onChange={(e) => save.mutate({ llm_provider: e.target.value, llm_model: model })}
+                  onChange={(e) =>
+                    save.mutate({ llm_provider: e.target.value, llm_model: model, custom_prompt: prompt })
+                  }
                 >
                   <option value="google">Google</option>
                   <option value="openrouter">OpenRouter</option>
@@ -202,6 +213,24 @@ export function SettingsPage() {
                     )}
                   </div>
                 )}
+              </div>
+
+              <div>
+                <label htmlFor="custom-prompt" className="mb-1 block text-sm font-medium">
+                  Custom prompt
+                </label>
+                <textarea
+                  id="custom-prompt"
+                  className={area}
+                  maxLength={2000}
+                  placeholder={'Extra rules for reading receipts — they get added to the prompt, not replacing it.\ne.g. “apple vinegar goes in Self Care (we use it for hair rinses)”'}
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onBlur={() => {
+                    if (settings.data && prompt !== settings.data.custom_prompt)
+                      save.mutate({ llm_provider: provider, llm_model: model, custom_prompt: prompt })
+                  }}
+                />
               </div>
             </div>
           )}
