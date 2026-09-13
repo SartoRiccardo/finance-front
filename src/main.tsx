@@ -11,8 +11,8 @@ import { queryClient } from './query-client'
 // registered in this browser, evict it + its caches so dev never shows stale
 // precached content.
 if (import.meta.env.DEV) {
-  navigator.serviceWorker?.getRegistrations().then((rs) => rs.forEach((r) => r.unregister()))
-  caches?.keys().then((ks) => ks.forEach((k) => caches.delete(k)))
+  if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistrations().then((rs) => rs.forEach((r) => r.unregister()))
+  if ('caches' in window) caches.keys().then((ks) => ks.forEach((k) => caches.delete(k)))
 }
 
 createRoot(document.getElementById('root')!).render(
