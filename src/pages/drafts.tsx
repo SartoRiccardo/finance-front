@@ -372,8 +372,19 @@ function RowFields({
 
   return (
     <div className="space-y-1.5 rounded-lg border bg-card p-2">
-      <div className="grid grid-cols-2 gap-1.5">
-        <input type="date" required aria-label="Date" className={cn(field, 'tabular-nums')} value={values.date} onChange={set('date')} onBlur={() => commit(values)} />
+      {/* minmax(0,1fr): tracks can't grow past 50% even if a field's intrinsic width begs */}
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-1.5">
+        {/* appearance-none: iOS sizes date inputs to their content, ignoring width, until
+            the native appearance is stripped; the value then needs explicit left-align */}
+        <input
+          type="date"
+          required
+          aria-label="Date"
+          className={cn(field, 'tabular-nums appearance-none [&::-webkit-date-and-time-value]:text-left')}
+          value={values.date}
+          onChange={set('date')}
+          onBlur={() => commit(values)}
+        />
         <select aria-label="Category" required className={field} value={values.category_id} onChange={(e) => { set('category_id')(e); commit({ ...values, category_id: e.target.value }) }}>
           <option value="" disabled>
             Category…
@@ -385,7 +396,7 @@ function RowFields({
           ))}
         </select>
       </div>
-      <div className="grid grid-cols-[1fr_6rem] gap-1.5">
+      <div className="grid grid-cols-[minmax(0,1fr)_6rem] gap-1.5">
         <input
           required
           maxLength={200}
