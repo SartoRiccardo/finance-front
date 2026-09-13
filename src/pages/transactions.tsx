@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { CirclePlus, Pencil, Trash2 } from 'lucide-react'
@@ -189,6 +189,13 @@ export function TransactionsPage() {
   }, [tx.hasNextPage, tx.fetchNextPage, qs])
 
   const items = tx.data?.pages.flatMap((p) => p.items) ?? []
+  // Row border carries the category/label color, softened for light and dark.
+  const rowStyle = (t: Tx): CSSProperties | undefined => {
+    const item = t.category_id ? catById.get(t.category_id) : labelById.get(t.label_id ?? -1)
+    return item?.color
+      ? { borderColor: `color-mix(in srgb, ${item.color} 45%, transparent)` }
+      : undefined
+  }
   const total = tx.data?.pages[0]?.total ?? 0
   return (
     <div className="p-4 pb-24">
@@ -242,7 +249,7 @@ export function TransactionsPage() {
 
       <div className="mt-3 space-y-2 md:hidden">
         {items.map((t) => (
-          <article key={t.id} className="flex items-center gap-2 rounded-lg border bg-card p-3">
+          <article key={t.id} className="flex items-center gap-2 rounded-lg border bg-card p-3" style={rowStyle(t)}>
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline gap-2">
                 <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{dayLabel(t.date)}</span>
@@ -273,7 +280,7 @@ export function TransactionsPage() {
           </thead>
           <tbody>
             {items.map((t) => (
-              <tr key={t.id} className="border-b">
+              <tr key={t.id} className="border-b" style={rowStyle(t)}>
                 <td className="py-2 tabular-nums">{dayLabel(t.date)}</td>
                 <td className="py-2">{t.description}</td>
                 <td className="py-2">
