@@ -1,7 +1,7 @@
 import { useRef, useState, type ChangeEvent } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { Camera, ImagePlus, Loader2, Pencil, ScanLine, Trash2 } from 'lucide-react'
+import { Camera, ImagePlus, Loader2, Mail, Pencil, ScanLine, Trash2 } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
 import { money } from '@/lib/money'
 import { cn } from '@/lib/utils'
@@ -18,6 +18,7 @@ type Draft = {
   status: 'processing' | 'open' | 'error'
   error: string | null
   created_at: string
+  email_meta: { from: string; date: string; subject: string } | null // null ⇒ photo draft
   rows?: DraftRow[]
 }
 type RowValues = { date: string; description: string; amount: string; category_id: string }
@@ -149,6 +150,7 @@ export function DraftsPage() {
 function DraftCard({ draft, rows, onOpen }: { draft: Draft; rows?: DraftRow[]; onOpen: () => void }) {
   const total = (rows ?? []).reduce((n, r) => n + Number(r.amount), 0)
   const open = draft.status === 'open'
+  const email = draft.email_meta // null ⇒ photo draft
   return (
     <button
       type="button"
@@ -158,20 +160,30 @@ function DraftCard({ draft, rows, onOpen }: { draft: Draft; rows?: DraftRow[]; o
       <span className="flex size-11 shrink-0 items-center justify-center rounded-md bg-secondary text-muted-foreground">
         {draft.status === 'processing' ? (
           <Loader2 className="size-5 animate-spin" aria-hidden />
+        ) : email ? (
+          <Mail className="size-5" aria-hidden />
         ) : (
           <ScanLine className="size-5" aria-hidden />
         )}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium">{rows?.[0]?.description || 'Receipt'}</span>
-        <span className={cn('block text-xs', draft.status === 'error' ? 'text-destructive' : 'text-muted-foreground')}>
+        <span className="block truncate text-sm font-medium">{rows?.[0]?.description || email?.subject || 'Receipt'}</span>
+        <span
+          className={cn(
+            'block text-xs',
+            draft.status === 'error' ? 'text-destructive' : 'text-muted-foreground',
+            email && open && !rows && 'truncate', // from · subject before rows land
+          )}
+        >
           {draft.status === 'processing'
             ? 'Reading the receipt…'
             : draft.status === 'error'
               ? 'Reading failed'
               : rows
                 ? `${rows.length} ${rows.length === 1 ? 'row' : 'rows'} · ${dtFmt.format(new Date(draft.created_at))}`
-                : '…'}
+                : email
+                  ? `${email.from} · ${email.subject}`
+                  : '…'}
         </span>
       </span>
       {open && rows && <span className="shrink-0 text-sm font-semibold tabular-nums">{money(total, 'spend')}</span>}
