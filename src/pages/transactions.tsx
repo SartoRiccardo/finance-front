@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { CirclePlus, Pencil, Trash2 } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
 import { money, type Direction } from '@/lib/money'
+import { MONTHS, monthEnd } from '@/lib/months'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Sheet } from '@/components/ui/sheet'
@@ -31,7 +32,6 @@ const PAGE_SIZE = 50
 const field =
   'h-10 w-full rounded-md border border-input bg-transparent px-3 text-base outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50'
 const dayFmt = new Intl.DateTimeFormat('it-IT', { day: '2-digit', month: 'short' })
-const monthFmt = new Intl.DateTimeFormat('it-IT', { month: 'short', year: 'numeric' })
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
 // Local-date helpers: `new Date('YYYY-MM-DD')` parses as UTC and shifts the day.
@@ -42,17 +42,6 @@ const TODAY = () => {
   const d = new Date()
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
-const monthEnd = (ym: string) => {
-  const [y, m] = ym.split('-').map(Number)
-  return `${ym}-${pad(new Date(y, m, 0).getDate())}`
-}
-const MONTHS = Array.from({ length: 12 }, (_, i) => {
-  const d = new Date()
-  d.setDate(1)
-  d.setMonth(d.getMonth() - i)
-  return { value: `${d.getFullYear()}-${pad(d.getMonth() + 1)}`, label: cap(monthFmt.format(d)) }
-})
-
 export function TransactionsPage() {
   const [month, setMonth] = useState(TODAY().slice(0, 7))
   const [categoryId, setCategoryId] = useState('')

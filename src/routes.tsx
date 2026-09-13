@@ -11,6 +11,7 @@ import { AppShell } from '@/components/shell'
 import { LoginPage } from '@/pages/login'
 import { DashboardPage } from '@/pages/dashboard'
 import { TransactionsPage } from '@/pages/transactions'
+import { InsightsPage } from '@/pages/insights'
 
 const rootRoute = createRootRoute({ component: () => <Outlet /> })
 
@@ -55,6 +56,17 @@ const transactionsRoute = createRoute({
   ),
 })
 
+const insightsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/insights',
+  beforeLoad: requireAuth,
+  component: () => (
+    <AppShell>
+      <InsightsPage />
+    </AppShell>
+  ),
+})
+
 // Any unknown path goes back to the guarded shell.
 const catchAllRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -64,7 +76,7 @@ const catchAllRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([loginRoute, indexRoute, transactionsRoute, catchAllRoute])
+const routeTree = rootRoute.addChildren([loginRoute, indexRoute, transactionsRoute, insightsRoute, catchAllRoute])
 
 export const router = createRouter({ routeTree })
 
