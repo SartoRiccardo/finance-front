@@ -11,7 +11,14 @@ import { Sheet } from '@/components/ui/sheet'
 type Category = { id: number; name: string }
 type DraftRow = { id: number; date: string; description: string; amount: string | number; category_id: number | null }
 // id < 0 ⇒ row not on the server yet (POST on first commit), id > 0 ⇒ PATCH.
-type Draft = { id: number; source: string; status: string; created_at: string; rows?: DraftRow[] }
+type Draft = {
+  id: number
+  source: string
+  status: 'processing' | 'open' | 'error'
+  error: string | null
+  created_at: string
+  rows?: DraftRow[]
+}
 type RowValues = { date: string; description: string; amount: string; category_id: string }
 type RowBody = { date: string; description: string; amount: string; direction: 'spend'; category_id: number }
 
@@ -39,18 +46,24 @@ const valid = (v: RowValues) =>
 
 export function DraftsPage() {
   const qc = useQueryClient()
-  const [working, setWorking] = useState<null | 'upload' | 'extract'>(null)
+  const [working, setWorking] = useState<null | 'upload'>(null)
   const [detailId, setDetailId] = useState<number | null>(null)
   const cameraRef = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const categories = useQuery({ queryKey: ['categories'], queryFn: () => api<Category[]>('/categories') })
-  const drafts = useQuery({ queryKey: ['drafts'], queryFn: () => api<Draft[]>('/drafts') })
+  const drafts = useQuery({
+    queryKey: ['drafts'],
+    queryFn: () => api<Draft[]>('/drafts'),
+    // Poll while any draft is being read; the card fills in when it lands.
+    refetchInterval: (q) => ((q.state.data ?? []).some((d) => d.status === 'processing') ? 2000 : false),
+  })
   // ponytail: the list may omit rows, so cards fetch each open draft's detail (few drafts, cheap N+1).
   const details = useQueries({
     queries: (drafts.data ?? []).map((d) => ({
       queryKey: ['draft', d.id],
       queryFn: () => api<Draft>(`/drafts/${d.id}`),
+      enabled: d.status === 'open',
     })),
   })
 
@@ -62,13 +75,12 @@ export function DraftsPage() {
       const fd = new FormData()
       fd.append('file', file)
       const { upload_id } = await api<{ upload_id: number }>('/uploads', { method: 'POST', body: fd })
-      setWorking('extract')
+      // Returns 201 with the draft still processing — the card/sheet takes over from here.
       return api<Draft>('/drafts/from-upload', { method: 'POST', body: JSON.stringify({ upload_id }) })
     },
-    // Cancel-safe: leaving the page mid-extraction is fine — this still runs and the list refreshes.
+    // Cancel-safe: leaving the page mid-extraction is fine — the server keeps going and the card shows it.
     onSuccess: (draft) => {
       qc.invalidateQueries({ queryKey: ['drafts'] })
-      toast.success(`Draft created with ${draft.rows?.length ?? 0} rows`)
       setDetailId(draft.id)
     },
     onError: fail,
@@ -102,8 +114,8 @@ export function DraftsPage() {
         <div role="status" className="mt-3 flex items-center gap-3 rounded-lg border bg-card p-4">
           <Loader2 className="size-5 shrink-0 animate-spin text-muted-foreground" aria-hidden />
           <div className="min-w-0">
-            <p className="text-sm font-medium">{working === 'upload' ? 'Uploading photo…' : 'Reading the receipt…'}</p>
-            <p className="text-xs text-muted-foreground">Takes a few seconds. You can leave this page.</p>
+            <p className="text-sm font-medium">Uploading photo…</p>
+            <p className="text-xs text-muted-foreground">You can leave this page.</p>
           </div>
         </div>
       )}
@@ -134,6 +146,7 @@ export function DraftsPage() {
 
 function DraftCard({ draft, rows, onOpen }: { draft: Draft; rows?: DraftRow[]; onOpen: () => void }) {
   const total = (rows ?? []).reduce((n, r) => n + Number(r.amount), 0)
+  const open = draft.status === 'open'
   return (
     <button
       type="button"
@@ -141,15 +154,25 @@ function DraftCard({ draft, rows, onOpen }: { draft: Draft; rows?: DraftRow[]; o
       className="flex min-h-11 w-full items-center gap-3 rounded-lg border bg-card p-3 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
     >
       <span className="flex size-11 shrink-0 items-center justify-center rounded-md bg-secondary text-muted-foreground">
-        <ScanLine className="size-5" aria-hidden />
+        {draft.status === 'processing' ? (
+          <Loader2 className="size-5 animate-spin" aria-hidden />
+        ) : (
+          <ScanLine className="size-5" aria-hidden />
+        )}
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium">{rows?.[0]?.description || 'Receipt'}</span>
-        <span className="block text-xs text-muted-foreground">
-          {rows ? `${rows.length} ${rows.length === 1 ? 'row' : 'rows'} · ${dtFmt.format(new Date(draft.created_at))}` : '…'}
+        <span className={cn('block text-xs', draft.status === 'error' ? 'text-destructive' : 'text-muted-foreground')}>
+          {draft.status === 'processing'
+            ? 'Reading the receipt…'
+            : draft.status === 'error'
+              ? 'Reading failed'
+              : rows
+                ? `${rows.length} ${rows.length === 1 ? 'row' : 'rows'} · ${dtFmt.format(new Date(draft.created_at))}`
+                : '…'}
         </span>
       </span>
-      {rows && <span className="shrink-0 text-sm font-semibold tabular-nums">{money(total, 'spend')}</span>}
+      {open && rows && <span className="shrink-0 text-sm font-semibold tabular-nums">{money(total, 'spend')}</span>}
     </button>
   )
 }
@@ -159,8 +182,14 @@ function DraftDetail({ id, categories, onClose }: { id: number; categories: Cate
   // Local rows win over refetches so a blur-save doesn't clobber edits in other rows;
   // reset to null to re-sync from the server (after an error).
   const [local, setLocal] = useState<DraftRow[] | null>(null)
-  const draft = useQuery({ queryKey: ['draft', id], queryFn: () => api<Draft>(`/drafts/${id}`) })
-  const rows = local ?? draft.data?.rows ?? []
+  const draft = useQuery({
+    queryKey: ['draft', id],
+    queryFn: () => api<Draft>(`/drafts/${id}`),
+    // The sheet fills itself in once the server finishes reading.
+    refetchInterval: (q) => (q.state.data?.status === 'processing' ? 2000 : false),
+  })
+  const status = draft.data?.status
+  const rows = status === 'open' ? (local ?? draft.data?.rows ?? []) : []
   const total = rows.reduce((n, r) => n + Number(r.amount), 0)
 
   const save = useMutation({
@@ -209,31 +238,42 @@ function DraftDetail({ id, categories, onClose }: { id: number; categories: Cate
       open
       onOpenChange={(open) => !open && onClose()}
       title="Draft receipt"
-      description={rows.length ? `${rows.length} rows · ${money(total, 'spend')}` : 'No rows'}
+      description={status === 'processing' ? 'Reading…' : rows.length ? `${rows.length} rows · ${money(total, 'spend')}` : 'No rows'}
     >
       {draft.isPending && <p className="py-4 text-center text-sm text-muted-foreground">Loading…</p>}
+      {status === 'processing' && (
+        <div role="status" className="py-8 text-center">
+          <Loader2 className="mx-auto size-6 animate-spin text-muted-foreground" aria-hidden />
+          <p className="mt-2 text-sm text-muted-foreground">Reading the receipt… Takes a few seconds.</p>
+        </div>
+      )}
+      {status === 'error' && (
+        <p className="text-sm text-destructive">{draft.data?.error || 'Reading failed.'}</p>
+      )}
 
-      <div className="space-y-4">
-        {rows.map((row) => (
-          <RowFields
-            key={row.id}
-            initial={row}
-            categories={categories}
-            onCommit={(v) => save.mutate({ rowId: row.id, body: toBody(v) })}
-            onRemove={() => (row.id > 0 ? removeRow.mutate(row.id) : setLocal((rs) => (rs ?? rows).filter((r) => r.id !== row.id)))}
-          />
-        ))}
-        <Button
-          variant="outline"
-          className="h-11 w-full border-dashed"
-          disabled={rows.some((r) => r.id < 0)}
-          onClick={() =>
-            setLocal((rs) => [...(rs ?? rows), { id: -Date.now(), date: TODAY(), description: '', amount: '', category_id: null }])
-          }
-        >
-          <ScanLine aria-hidden /> Add row
-        </Button>
-      </div>
+      {status === 'open' && (
+        <div className="space-y-4">
+          {rows.map((row) => (
+            <RowFields
+              key={row.id}
+              initial={row}
+              categories={categories}
+              onCommit={(v) => save.mutate({ rowId: row.id, body: toBody(v) })}
+              onRemove={() => (row.id > 0 ? removeRow.mutate(row.id) : setLocal((rs) => (rs ?? rows).filter((r) => r.id !== row.id)))}
+            />
+          ))}
+          <Button
+            variant="outline"
+            className="h-11 w-full border-dashed"
+            disabled={rows.some((r) => r.id < 0)}
+            onClick={() =>
+              setLocal((rs) => [...(rs ?? rows), { id: -Date.now(), date: TODAY(), description: '', amount: '', category_id: null }])
+            }
+          >
+            <ScanLine aria-hidden /> Add row
+          </Button>
+        </div>
+      )}
 
       <div className="mt-6 flex gap-2">
         <Button
@@ -246,7 +286,11 @@ function DraftDetail({ id, categories, onClose }: { id: number; categories: Cate
         >
           Discard
         </Button>
-        <Button className="h-11 flex-1" disabled={busy || rows.length === 0} onClick={() => done.mutate(false)}>
+        <Button
+          className="h-11 flex-1"
+          disabled={busy || status !== 'open' || rows.length === 0}
+          onClick={() => done.mutate(false)}
+        >
           Approve{rows.length ? ` (${rows.length})` : ''}
         </Button>
       </div>
