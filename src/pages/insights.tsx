@@ -14,8 +14,9 @@ type CatRow = { category_id: number; name: string; is_investment: boolean; total
 type CatSeries = { category_id: number; name: string; is_investment: boolean; months: Cell[] }
 type Category = { id: number; color: string | null }
 
-const VIEWS = { breakdown: 'Breakdown', chart: 'Trend' } as const
-type View = keyof typeof VIEWS
+// Which side of the ledger to show — filters both the chart and the breakdown.
+const FILTERS = { all: 'All categories', spend: 'Spending', invest: 'Investments' } as const
+type Filter = keyof typeof FILTERS
 const TOP_N = 8
 
 // Neutral ink for color-less categories and the residual "Other" bucket — a
@@ -33,7 +34,7 @@ const fail = (e: unknown) => toast.error(e instanceof ApiError ? e.message : 'So
 
 export function InsightsPage() {
   const [month, setMonth] = useState(MONTHS[0].value)
-  const [view, setView] = useState<View>('breakdown')
+  const [filter, setFilter] = useState<Filter>('all')
   // Legend taps toggle lines (recharts v3 legend isn't clickable — custom content).
   const [hidden, setHidden] = useState<Set<string>>(() => new Set())
 
@@ -45,11 +46,9 @@ export function InsightsPage() {
     queryKey: ['reports', 'by-category', month],
     queryFn: () => api<CatRow[]>(`/reports/by-category?from=${from}&to=${to}`),
   })
-  // Only fetched once the trend view is opened.
   const trend = useQuery({
     queryKey: ['reports', 'category-series', year],
     queryFn: () => api<CatSeries[]>(`/reports/category-series?year=${year}`),
-    enabled: view === 'chart',
   })
   const categories = useQuery({ queryKey: ['categories'], queryFn: () => api<Category[]>('/categories') })
   const colorOf = new Map((categories.data ?? []).map((c) => [c.id, c.color]))
@@ -59,7 +58,8 @@ export function InsightsPage() {
     if (trend.error) fail(trend.error)
   }, [byCat.error, trend.error])
 
-  const rows = byCat.data ?? []
+  const isIn = (inv: boolean) => (filter === 'spend' ? !inv : filter === 'invest' ? inv : true)
+  const rows = (byCat.data ?? []).filter((r) => isIn(r.is_investment))
   const grand = rows.reduce((a, r) => a + Number(r.total), 0)
   const max = Math.max(...rows.map((r) => Number(r.total)), 0)
   const spend = rows.filter((r) => !r.is_investment)
@@ -67,6 +67,7 @@ export function InsightsPage() {
 
   // Top 8 by the charted period's total (the year), tail folded into "Other".
   const withData = (trend.data ?? [])
+    .filter((s) => isIn(s.is_investment))
     .map((s) => ({ s, sums: s.months.map(Number), sum: s.months.reduce<number>((a, b) => a + Number(b), 0) }))
     .filter((x) => x.sum > 0)
     .sort((a, b) => b.sum - a.sum)
@@ -92,38 +93,23 @@ export function InsightsPage() {
 
   return (
     <div className="p-4">
-      <div className="flex items-center justify-between gap-2">
-        <h1 className="text-xl font-semibold">Insights</h1>
-        <select
-          aria-label="Month"
-          className={cn(field, 'tabular-nums')}
-          value={month}
-          onChange={(e) => setMonth(e.target.value)}
-        >
+      <h1 className="text-xl font-semibold">Insights</h1>
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <select aria-label="Month" className={cn(field, 'tabular-nums')} value={month} onChange={(e) => setMonth(e.target.value)}>
           {MONTHS.map((m) => (
             <option key={m.value} value={m.value}>
               {m.label}
             </option>
           ))}
         </select>
-      </div>
-
-      <div role="radiogroup" aria-label="View" className="mt-3 grid max-w-xs grid-cols-2 rounded-md border p-1">
-        {(Object.keys(VIEWS) as View[]).map((v) => (
-          <button
-            key={v}
-            type="button"
-            role="radio"
-            aria-checked={view === v}
-            onClick={() => setView(v)}
-            className={cn(
-              'min-h-9 rounded-sm text-sm font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
-              view === v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground',
-            )}
-          >
-            {VIEWS[v]}
-          </button>
-        ))}
+        <select aria-label="Category type" className={field} value={filter} onChange={(e) => setFilter(e.target.value as Filter)}>
+          {Object.entries(FILTERS).map(([k, label]) => (
+            <option key={k} value={k}>
+              {label}
+            </option>
+          ))}
+        </select>
       </div>
 
       {byCat.isPending && (
@@ -139,27 +125,8 @@ export function InsightsPage() {
         </div>
       )}
 
-      <div className="mt-3 grid gap-6 md:grid-cols-2">
-        {view === 'breakdown' && byCat.isSuccess && (
-          <section aria-label={`Spending by category, ${monthLabel}`}>
-            {rows.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No spending recorded in {monthLabel}.</p>
-            ) : (
-              <>
-                <BarList rows={spend} colorOf={colorOf} max={max} grand={grand} />
-                {invested.length > 0 && (
-                  <>
-                    <h2 className="mt-4 mb-2 text-xs font-medium text-muted-foreground uppercase">Investments</h2>
-                    <BarList rows={invested} colorOf={colorOf} max={max} grand={grand} dimmed />
-                  </>
-                )}
-              </>
-            )}
-          </section>
-        )}
-
-        {view === 'chart' && (
-          <section aria-label={`Per-category spending across ${year}`}>
+      {/* Trend first, breakdown below — both always visible. */}
+      <section className="mt-4" aria-label={`Per-category spending across ${year}`}>
             {trend.isPending && (
               <p aria-live="polite" className="text-sm text-muted-foreground">
                 Loading…
@@ -264,9 +231,27 @@ export function InsightsPage() {
                 Retry
               </Button>
             )}
-          </section>
-        )}
-      </div>
+      </section>
+
+      <section className="mt-6" aria-label={`Spending by category, ${monthLabel}`}>
+        <h2 className="mb-3 text-xs font-medium text-muted-foreground uppercase">Breakdown — {monthLabel}</h2>
+        {byCat.isSuccess &&
+          (rows.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No spending recorded in {monthLabel}.</p>
+          ) : filter === 'all' ? (
+            <>
+              <BarList rows={spend} colorOf={colorOf} max={max} grand={grand} />
+              {invested.length > 0 && (
+                <>
+                  <h3 className="mt-4 mb-2 text-xs font-medium text-muted-foreground uppercase">Investments</h3>
+                  <BarList rows={invested} colorOf={colorOf} max={max} grand={grand} dimmed />
+                </>
+              )}
+            </>
+          ) : (
+            <BarList rows={rows} colorOf={colorOf} max={max} grand={grand} />
+          ))}
+      </section>
     </div>
   )
 }

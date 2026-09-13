@@ -132,7 +132,7 @@ export function DashboardPage() {
       {/* Graph above the table: pick a mode, then scan the numbers. */}
       {months.length > 0 && (
         <section className="mt-3">
-          <div role="radiogroup" aria-label="Graph" className="grid max-w-xs grid-cols-3 rounded-md border p-1">
+          <div role="radiogroup" aria-label="Graph" className="mx-auto grid max-w-xs grid-cols-3 rounded-md border p-1">
             {(Object.keys(MODES) as Mode[]).map((m) => (
               <button
                 key={m}

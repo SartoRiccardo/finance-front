@@ -43,7 +43,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <main className="flex-1 pt-[env(safe-area-inset-top)] pb-16 lg:pb-0">{children}</main>
       <nav
         aria-label="Main"
-        className="fixed inset-x-0 bottom-0 z-10 flex border-t bg-background pb-[env(safe-area-inset-bottom)] lg:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 flex border-t bg-background pb-[env(safe-area-inset-bottom)] lg:hidden"
       >
         <NavLinks />
       </nav>
