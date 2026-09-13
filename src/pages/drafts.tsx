@@ -1,14 +1,15 @@
 import { useRef, useState, type ChangeEvent } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { Camera, ImagePlus, Loader2, ScanLine, Trash2 } from 'lucide-react'
+import { Camera, ImagePlus, Loader2, Pencil, ScanLine, Trash2, X } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
 import { money } from '@/lib/money'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Sheet } from '@/components/ui/sheet'
+import { TxnRow } from '@/components/txn-row'
 
-type Category = { id: number; name: string }
+type Category = { id: number; name: string; color: string | null; is_investment: boolean }
 type DraftRow = { id: number; date: string; description: string; amount: string | number; category_id: number | null }
 // id < 0 ⇒ row not on the server yet (POST on first commit), id > 0 ⇒ PATCH.
 type Draft = {
@@ -182,6 +183,8 @@ function DraftDetail({ id, categories, onClose }: { id: number; categories: Cate
   // Local rows win over refetches so a blur-save doesn't clobber edits in other rows;
   // reset to null to re-sync from the server (after an error).
   const [local, setLocal] = useState<DraftRow[] | null>(null)
+  // Rows render static like the transactions list; exactly one row (id) shows its fields at a time.
+  const [editingId, setEditingId] = useState<number | null>(null)
   const draft = useQuery({
     queryKey: ['draft', id],
     queryFn: () => api<Draft>(`/drafts/${id}`),
@@ -191,6 +194,7 @@ function DraftDetail({ id, categories, onClose }: { id: number; categories: Cate
   const status = draft.data?.status
   const rows = status === 'open' ? (local ?? draft.data?.rows ?? []) : []
   const total = rows.reduce((n, r) => n + Number(r.amount), 0)
+  const catById = new Map(categories.map((c) => [c.id, c]))
 
   const save = useMutation({
     mutationFn: ({ rowId, body }: { rowId: number; body: RowBody }) =>
@@ -252,23 +256,59 @@ function DraftDetail({ id, categories, onClose }: { id: number; categories: Cate
       )}
 
       {status === 'open' && (
-        <div className="space-y-4">
-          {rows.map((row) => (
-            <RowFields
-              key={row.id}
-              initial={row}
-              categories={categories}
-              onCommit={(v) => save.mutate({ rowId: row.id, body: toBody(v) })}
-              onRemove={() => (row.id > 0 ? removeRow.mutate(row.id) : setLocal((rs) => (rs ?? rows).filter((r) => r.id !== row.id)))}
-            />
-          ))}
+        <div className="space-y-2">
+          {rows.map((row) =>
+            editingId === row.id ? (
+              <RowFields
+                key={row.id}
+                initial={row}
+                categories={categories}
+                onCommit={(v) => save.mutate({ rowId: row.id, body: toBody(v) })}
+                onCollapse={() => setEditingId(null)}
+              />
+            ) : (
+              <TxnRow
+                key={row.id}
+                date={row.date}
+                description={row.description}
+                amount={row.amount}
+                direction="spend"
+                category={row.category_id ? catById.get(row.category_id) : null}
+              >
+                <div className="flex justify-end">
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={`Edit ${row.description || 'row'}`}
+                    onClick={() => setEditingId(row.id)}
+                  >
+                    <Pencil aria-hidden />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={`Delete ${row.description || 'row'}`}
+                    onClick={() => {
+                      if (!confirm(`Delete “${row.description || 'this row'}”?`)) return
+                      if (row.id > 0) removeRow.mutate(row.id)
+                      else setLocal((rs) => (rs ?? rows).filter((r) => r.id !== row.id))
+                    }}
+                  >
+                    <Trash2 aria-hidden />
+                  </Button>
+                </div>
+              </TxnRow>
+            ),
+          )}
           <Button
             variant="outline"
             className="h-11 w-full border-dashed"
             disabled={rows.some((r) => r.id < 0)}
-            onClick={() =>
-              setLocal((rs) => [...(rs ?? rows), { id: -Date.now(), date: TODAY(), description: '', amount: '', category_id: null }])
-            }
+            onClick={() => {
+              const row: DraftRow = { id: -Date.now(), date: TODAY(), description: '', amount: '', category_id: null }
+              setLocal((rs) => [...(rs ?? rows), row])
+              setEditingId(row.id) // new rows open straight into their fields
+            }}
           >
             <ScanLine aria-hidden /> Add row
           </Button>
@@ -302,12 +342,12 @@ function RowFields({
   initial,
   categories,
   onCommit,
-  onRemove,
+  onCollapse,
 }: {
   initial: DraftRow
   categories: Category[]
   onCommit: (v: RowValues) => void
-  onRemove: () => void
+  onCollapse: () => void
 }) {
   const [values, setValues] = useState<RowValues>({
     date: initial.date,
@@ -340,8 +380,8 @@ function RowFields({
           </option>
         ))}
       </select>
-      <Button variant="ghost" size="icon" className="size-11 text-muted-foreground" aria-label="Remove row" onClick={onRemove}>
-        <Trash2 aria-hidden />
+      <Button variant="ghost" size="icon" className="size-11 text-muted-foreground" aria-label="Done editing" onClick={onCollapse}>
+        <X aria-hidden />
       </Button>
       <div className="col-span-2 grid grid-cols-[1fr_6rem] gap-1.5">
         <input

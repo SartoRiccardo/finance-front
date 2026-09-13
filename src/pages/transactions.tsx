@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { CirclePlus, Pencil, Trash2 } from 'lucide-react'
@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Sheet } from '@/components/ui/sheet'
 import { ColorEditor } from '@/components/color-editor'
+import { TxnChip, TxnRow, dayLabel } from '@/components/txn-row'
 
 type Category = { id: number; name: string; description: string | null; is_investment: boolean; color: string | null }
 type Label = { id: number; name: string; color: string | null }
@@ -31,13 +32,9 @@ const PAGE_SIZE = 50
 // 16px: iOS Safari zooms focused inputs below 16px.
 const field =
   'h-10 w-full rounded-md border border-input bg-transparent px-3 text-base outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50'
-const dayFmt = new Intl.DateTimeFormat('it-IT', { day: '2-digit', month: 'short' })
-const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
 // Local-date helpers: `new Date('YYYY-MM-DD')` parses as UTC and shifts the day.
 const pad = (n: number) => String(n).padStart(2, '0')
-const day = (iso: string) => new Date(`${iso}T00:00:00`)
-const dayLabel = (iso: string) => cap(dayFmt.format(day(iso)))
 const TODAY = () => {
   const d = new Date()
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
@@ -126,26 +123,10 @@ export function TransactionsPage() {
 
   const catById = new Map((categories.data ?? []).map((c) => [c.id, c]))
   const labelById = new Map((labels.data ?? []).map((l) => [l.id, l]))
+  const itemOf = (t: Tx) => (t.category_id ? catById.get(t.category_id) : labelById.get(t.label_id ?? -1))
   const chip = (t: Tx) => {
-    const item = t.category_id ? catById.get(t.category_id) : labelById.get(t.label_id ?? -1)
-    if (!item) return null
-    return (
-      <>
-        <span className="inline-flex max-w-40 items-center gap-1.5 truncate rounded-full bg-secondary px-2 py-0.5 text-xs text-secondary-foreground">
-          {item.color && (
-            <span
-              aria-hidden
-              className="size-2 shrink-0 rounded-full border border-black/10"
-              style={{ backgroundColor: item.color }}
-            />
-          )}
-          {item.name}
-        </span>
-        {'is_investment' in item && item.is_investment && (
-          <span className="rounded-full border px-1.5 py-0.5 text-xs text-muted-foreground">Investment</span>
-        )}
-      </>
-    )
+    const item = itemOf(t)
+    return item ? <TxnChip item={item} /> : null
   }
   const actions = (t: Tx) => (
     <div className="flex justify-end">
@@ -179,8 +160,8 @@ export function TransactionsPage() {
 
   const items = tx.data?.pages.flatMap((p) => p.items) ?? []
   // Row border carries the category/label color, softened for light and dark.
-  const rowStyle = (t: Tx): CSSProperties | undefined => {
-    const item = t.category_id ? catById.get(t.category_id) : labelById.get(t.label_id ?? -1)
+  const rowStyle = (t: Tx) => {
+    const item = itemOf(t)
     return item?.color
       ? { borderColor: `color-mix(in srgb, ${item.color} 45%, transparent)` }
       : undefined
@@ -238,19 +219,16 @@ export function TransactionsPage() {
 
       <div className="mt-3 space-y-2 md:hidden">
         {items.map((t) => (
-          <article key={t.id} className="flex items-center gap-2 rounded-lg border bg-card p-3" style={rowStyle(t)}>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-baseline gap-2">
-                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{dayLabel(t.date)}</span>
-                <p className="truncate text-sm font-medium">{t.description}</p>
-              </div>
-              <div className="mt-1.5 flex items-center gap-1.5">{chip(t)}</div>
-            </div>
-            <span className={cn('shrink-0 text-sm font-semibold tabular-nums', t.direction === 'earn' && 'text-emerald-600')}>
-              {money(t.amount, t.direction)}
-            </span>
+          <TxnRow
+            key={t.id}
+            date={t.date}
+            description={t.description}
+            amount={t.amount}
+            direction={t.direction}
+            category={itemOf(t)}
+          >
             {actions(t)}
-          </article>
+          </TxnRow>
         ))}
       </div>
 
