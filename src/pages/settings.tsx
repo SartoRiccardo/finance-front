@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { Check } from 'lucide-react'
+import { Check, Copy, KeyRound } from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { Sheet } from '@/components/ui/sheet'
 
 type Settings = { llm_provider: string; llm_model: string; custom_prompt: string }
 type ModelInfo = { id: string; name: string; input_cost: number | null; output_cost: number | null }
@@ -11,6 +13,9 @@ type Usage = {
   totals: { calls: number; input_tokens: number; output_tokens: number; cost_usd: string | null }
   recent: { model: string; input_tokens: number; output_tokens: number; cost_usd: string | null; draft_id: number; created_at: string }[]
 }
+type ApiKey = { id: number; name: string; key_prefix: string; created_at: string; last_used_at: string | null; revoked_at: string | null }
+// The full pf_… key rides only on the POST response — never stored, never fetched again.
+type NewApiKey = ApiKey & { key: string }
 
 // Per-M-token USD: "free" for 0/0, "price n/a" when the catalog has no number.
 const cost = (m: ModelInfo) =>
@@ -75,10 +80,140 @@ function CostsTab() {
   )
 }
 
+function KeysTab() {
+  const qc = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState('')
+  // Set on create → the sheet flips to the shown-once screen; cleared on dismiss.
+  const [created, setCreated] = useState<NewApiKey | null>(null)
+
+  const keys = useQuery({ queryKey: ['api-keys'], queryFn: () => api<ApiKey[]>('/keys') })
+  const create = useMutation({
+    mutationFn: () => api<NewApiKey>('/keys', { method: 'POST', body: JSON.stringify({ name: name.trim() }) }),
+    onSuccess: (k) => {
+      setCreated(k)
+      setName('')
+      qc.invalidateQueries({ queryKey: ['api-keys'] })
+    },
+    onError: fail,
+  })
+  const revoke = useMutation({
+    mutationFn: (id: number) => api(`/keys/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      toast.success('Key revoked')
+      qc.invalidateQueries({ queryKey: ['api-keys'] })
+    },
+    onError: fail,
+  })
+
+  const list = keys.data ?? []
+  return (
+    <div className="mt-4 space-y-3">
+      <Button className="h-11 w-full" onClick={() => setOpen(true)}>
+        <KeyRound aria-hidden /> New key
+      </Button>
+
+      {keys.isPending && <p className="text-sm text-muted-foreground">Loading…</p>}
+      {keys.isError && <p className="text-sm text-destructive">Could not load keys.</p>}
+      {list.length === 0 && !keys.isPending && !keys.isError && (
+        <p className="text-sm text-muted-foreground">No API keys yet.</p>
+      )}
+      <ul className="space-y-1">
+        {list.map((k) => (
+          <li
+            key={k.id}
+            className={cn(
+              'flex items-center justify-between gap-2 rounded-md border bg-card px-3 py-2',
+              k.revoked_at && 'opacity-50',
+            )}
+          >
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-medium">{k.name}</span>
+              <span className="block truncate text-xs text-muted-foreground">
+                {k.key_prefix}… · {dtFmt.format(new Date(k.created_at))} ·{' '}
+                {k.last_used_at ? `used ${dtFmt.format(new Date(k.last_used_at))}` : 'never used'}
+              </span>
+            </span>
+            {k.revoked_at ? (
+              <span className="shrink-0 text-xs text-muted-foreground">Revoked</span>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 shrink-0"
+                disabled={revoke.isPending}
+                onClick={() => confirm(`Revoke “${k.name}”?`) && revoke.mutate(k.id)}
+              >
+                Revoke
+              </Button>
+            )}
+          </li>
+        ))}
+      </ul>
+
+      <Sheet
+        open={open}
+        onOpenChange={(o) => {
+          setOpen(o)
+          if (!o) setCreated(null) // the shown-once key dies with the sheet
+        }}
+        title={created ? 'Key created' : 'New API key'}
+        description={created ? undefined : 'Name it after whatever will use it.'}
+      >
+        {created ? (
+          <div className="space-y-3">
+            <p className="text-sm font-medium text-destructive">
+              You won’t see this key again — copy it somewhere safe now.
+            </p>
+            <code className="block break-all rounded-md border bg-card p-3 font-mono text-sm">{created.key}</code>
+            <div className="flex gap-2">
+              <Button
+                className="h-11 flex-1"
+                onClick={() =>
+                  navigator.clipboard.writeText(created.key).then(() => toast.success('Key copied')).catch(fail)
+                }
+              >
+                <Copy aria-hidden /> Copy
+              </Button>
+              <Button variant="outline" className="h-11 flex-1" onClick={() => setOpen(false)}>
+                Done
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (name.trim()) create.mutate()
+            }}
+          >
+            <label htmlFor="key-name" className="mb-1 block text-sm font-medium">
+              Name
+            </label>
+            <input
+              id="key-name"
+              required
+              maxLength={100}
+              placeholder="e.g. Home Assistant"
+              autoComplete="off"
+              className={field}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+            <Button type="submit" className="mt-3 h-11 w-full" disabled={create.isPending || !name.trim()}>
+              Create key
+            </Button>
+          </form>
+        )}
+      </Sheet>
+    </div>
+  )
+}
+
 export function SettingsPage() {
   const qc = useQueryClient()
   const settings = useQuery({ queryKey: ['settings'], queryFn: () => api<Settings>('/settings') })
-  const [tab, setTab] = useState<'model' | 'costs'>('model')
+  const [tab, setTab] = useState<'model' | 'costs' | 'keys'>('model')
   const [q, setQ] = useState('')
   const [search, setSearch] = useState('')
   const [prompt, setPrompt] = useState('')
@@ -124,8 +259,8 @@ export function SettingsPage() {
       <h1 className="text-xl font-semibold">Settings</h1>
       <p className="mt-1 text-sm text-muted-foreground">Provider and model for receipt extraction.</p>
 
-      <div role="radiogroup" aria-label="Settings section" className="mt-3 grid grid-cols-2 rounded-md border p-1">
-        {(['model', 'costs'] as const).map((t) => (
+      <div role="radiogroup" aria-label="Settings section" className="mt-3 grid grid-cols-3 rounded-md border p-1">
+        {(['model', 'costs', 'keys'] as const).map((t) => (
           <button
             key={t}
             type="button"
@@ -137,13 +272,15 @@ export function SettingsPage() {
               tab === t ? 'bg-secondary font-semibold' : 'text-muted-foreground',
             )}
           >
-            {t === 'model' ? 'Model' : 'Costs'}
+            {t === 'model' ? 'Model' : t === 'costs' ? 'Costs' : 'Keys'}
           </button>
         ))}
       </div>
 
       {tab === 'costs' ? (
         <CostsTab />
+      ) : tab === 'keys' ? (
+        <KeysTab />
       ) : (
         <>
           {settings.isPending && <p className="mt-4 text-sm text-muted-foreground">Loading…</p>}
