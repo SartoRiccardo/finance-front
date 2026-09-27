@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { PiggyBank } from 'lucide-react'
 import { money, type Direction } from '@/lib/money'
 import { cn } from '@/lib/utils'
 
@@ -23,20 +24,18 @@ export function TxnChip({ item }: { item: CatLike }) {
         )}
         {item.name}
       </span>
-      {item.is_investment && (
-        <span className="rounded-full border px-1.5 py-0.5 text-xs text-muted-foreground">Investment</span>
-      )}
     </>
   )
 }
 
-/** Mobile transaction row (transactions list + draft sheet): tinted border, day, description, chip, amount, action slot. */
+/** Mobile transaction row (transactions list + draft sheet): tinted border, day, description, chip, amount, action slot. Compact: one line — day, description, amount; no chip, no actions. */
 export function TxnRow({
   date,
   description,
   amount,
   direction,
   category,
+  compact,
   children,
 }: {
   date: string
@@ -44,8 +43,27 @@ export function TxnRow({
   amount: string | number
   direction: Direction
   category?: CatLike | null
+  compact?: boolean
   children?: ReactNode
 }) {
+  if (compact)
+    return (
+      <article
+        className="flex items-center gap-2 rounded-lg border bg-card p-3"
+        style={category?.color ? { borderColor: `color-mix(in srgb, ${category.color} 45%, transparent)` } : undefined}
+      >
+        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{dayLabel(date)}</span>
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <p className="truncate text-sm font-medium">{description}</p>
+          {category?.is_investment && (
+            <PiggyBank className="size-3.5 shrink-0 text-muted-foreground" aria-label="Investment" />
+          )}
+        </div>
+        <span className={cn('shrink-0 text-sm font-semibold tabular-nums', direction === 'earn' && 'text-emerald-600')}>
+          {money(amount, direction)}
+        </span>
+      </article>
+    )
   return (
     <article
       className="flex items-center gap-2 rounded-lg border bg-card p-3"
@@ -55,6 +73,9 @@ export function TxnRow({
         <div className="flex items-baseline gap-2">
           <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{dayLabel(date)}</span>
           <p className="truncate text-sm font-medium">{description}</p>
+          {category?.is_investment && (
+            <PiggyBank className="size-3.5 shrink-0 self-center text-muted-foreground" aria-label="Investment" />
+          )}
         </div>
         <div className="mt-1.5 flex items-center gap-1.5">{category && <TxnChip item={category} />}</div>
       </div>

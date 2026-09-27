@@ -8,7 +8,6 @@ import { MONTHS, monthEnd } from '@/lib/months'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Sheet } from '@/components/ui/sheet'
-import { ColorEditor } from '@/components/color-editor'
 import { TxnChip, TxnRow, dayLabel } from '@/components/txn-row'
 
 type Category = { id: number; name: string; description: string | null; is_investment: boolean; color: string | null }
@@ -44,7 +43,14 @@ export function TransactionsPage() {
   const [categoryId, setCategoryId] = useState('')
   const [direction, setDirection] = useState('')
   const [editing, setEditing] = useState<Tx | 'new' | null>(null)
-  const [colorsOpen, setColorsOpen] = useState(false)
+  // Persisted list density; anything but 'compact' falls back to Detail.
+  const [view, setView] = useState<'compact' | 'detail'>(() =>
+    localStorage.getItem('pf.txn-view') === 'compact' ? 'compact' : 'detail',
+  )
+  const setTxView = (v: 'compact' | 'detail') => {
+    setView(v)
+    localStorage.setItem('pf.txn-view', v)
+  }
 
   const params = new URLSearchParams()
   if (month) {
@@ -208,31 +214,57 @@ export function TransactionsPage() {
         <p aria-live="polite" className="text-xs text-muted-foreground">
           {tx.isPending ? 'Loading…' : tx.isError ? 'Could not load transactions.' : `${total} transactions`}
         </p>
-        <Button
-          variant="ghost"
-          className="h-7 shrink-0 px-2 text-xs text-muted-foreground"
-          onClick={() => setColorsOpen(true)}
-        >
-          Colors
-        </Button>
+        <div role="radiogroup" aria-label="Transaction view" className="flex shrink-0 rounded-md border p-0.5">
+          {(['compact', 'detail'] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              role="radio"
+              aria-checked={view === v}
+              onClick={() => setTxView(v)}
+              className={cn(
+                'h-8 rounded-sm px-2.5 text-xs font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                view === v ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground',
+              )}
+            >
+              {v === 'compact' ? 'Compact' : 'Detail'}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <div className="mt-3 space-y-2 md:hidden">
-        {items.map((t) => (
-          <TxnRow
-            key={t.id}
-            date={t.date}
-            description={t.description}
-            amount={t.amount}
-            direction={t.direction}
-            category={itemOf(t)}
-          >
-            {actions(t)}
-          </TxnRow>
-        ))}
-      </div>
+      {view === 'compact' ? (
+        <div className="mt-3 space-y-2">
+          {items.map((t) => (
+            <TxnRow
+              key={t.id}
+              compact
+              date={t.date}
+              description={t.description}
+              amount={t.amount}
+              direction={t.direction}
+              category={itemOf(t)}
+            />
+          ))}
+        </div>
+      ) : (
+        <>
+          <div className="mt-3 space-y-2 md:hidden">
+            {items.map((t) => (
+              <TxnRow
+                key={t.id}
+                date={t.date}
+                description={t.description}
+                amount={t.amount}
+                direction={t.direction}
+                category={itemOf(t)}
+              >
+                {actions(t)}
+              </TxnRow>
+            ))}
+          </div>
 
-      <div className="hidden md:block">
+          <div className="hidden md:block">
         <table className="mt-3 w-full text-sm">
           <thead>
             <tr className="border-b text-left text-muted-foreground">
@@ -261,7 +293,9 @@ export function TransactionsPage() {
             ))}
           </tbody>
         </table>
-      </div>
+          </div>
+        </>
+      )}
 
       {!tx.isPending && !tx.isError && items.length === 0 && (
         <p className="mt-6 text-sm text-muted-foreground">No transactions here yet.</p>
@@ -295,8 +329,6 @@ export function TransactionsPage() {
           onCancel={() => setEditing(null)}
         />
       </Sheet>
-
-      <ColorEditor open={colorsOpen} onOpenChange={setColorsOpen} />
     </div>
   )
 }

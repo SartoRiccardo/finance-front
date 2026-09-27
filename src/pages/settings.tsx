@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { Check, Copy, KeyRound, Plus, Trash2 } from 'lucide-react'
+import { Check, Copy, KeyRound, PiggyBank, Plus, Trash2 } from 'lucide-react'
 import { api } from '@/lib/api'
+import { PALETTE } from '@/lib/palette'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Sheet } from '@/components/ui/sheet'
@@ -14,7 +15,12 @@ type Usage = {
   recent: { model: string; input_tokens: number; output_tokens: number; cost_usd: string | null; draft_id: number; created_at: string }[]
 }
 type ApiKey = { id: number; name: string; key_prefix: string; created_at: string; last_used_at: string | null; revoked_at: string | null }
-type LabelRow = { id: number; name: string; is_spending: boolean; color: string | null }
+type Cat = { id: number; name: string; color: string | null; is_investment: boolean }
+type Lab = { id: number; name: string; color: string | null; is_spending: boolean }
+// kind-tagged so the row can read the right flag; ids collide across the two lists.
+type Taxon =
+  | { kind: 'categories'; id: number; name: string; color: string | null; is_investment: boolean }
+  | { kind: 'labels'; id: number; name: string; color: string | null; is_spending: boolean }
 // The full pf_… key rides only on the POST response — never stored, never fetched again.
 type NewApiKey = ApiKey & { key: string }
 
@@ -85,16 +91,43 @@ function CostsTab() {
   )
 }
 
-// Same ['labels'] key the transactions page uses, so invalidations keep both fresh.
-// fail() already surfaces the server's detail (duplicate-name 409, in-use 409) verbatim.
+// The preset palette is the only color picker in the app (standing user preference:
+// palettes, never raw color inputs).
+function Palette({ selected, onPick, label }: { selected: string | null; onPick: (c: string) => void; label: string }) {
+  return (
+    <div role="group" aria-label={label} className="grid grid-cols-10 gap-1.5">
+      {PALETTE.map((c) => (
+        <button
+          key={c}
+          type="button"
+          aria-label={c}
+          aria-pressed={selected === c}
+          onClick={() => onPick(c)}
+          className={cn(
+            'flex aspect-square items-center justify-center rounded-md border border-black/10 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+            selected === c && 'border-foreground ring-2 ring-ring',
+          )}
+          style={{ backgroundColor: c }}
+        >
+          {selected === c && <Check className="size-3 text-white mix-blend-difference" aria-hidden />}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// Same ['labels']/['categories'] keys the transactions page uses, so invalidations keep
+// both fresh. fail() surfaces the server's detail (duplicate-name 409, in-use 409) verbatim.
 function LabelsTab() {
   const qc = useQueryClient()
-  const labels = useQuery({ queryKey: ['labels'], queryFn: () => api<LabelRow[]>('/labels') })
+  const cats = useQuery({ queryKey: ['categories'], queryFn: () => api<Cat[]>('/categories') })
+  const labels = useQuery({ queryKey: ['labels'], queryFn: () => api<Lab[]>('/labels') })
+  // One expanded row at a time; kind+id because ids collide across the two lists.
+  const [expanded, setExpanded] = useState<{ kind: 'categories' | 'labels'; id: number } | null>(null)
   const [adding, setAdding] = useState(false)
   const [name, setName] = useState('')
   // '' = untouched → omitted from the POST.
   const [color, setColor] = useState('')
-  const [edit, setEdit] = useState<{ id: number; name: string; orig: string } | null>(null)
 
   const done = () => qc.invalidateQueries({ queryKey: ['labels'] })
   const add = useMutation({
@@ -108,79 +141,60 @@ function LabelsTab() {
     },
     onError: fail,
   })
-  const rename = useMutation({
-    mutationFn: ({ id, name: n }: { id: number; name: string }) =>
-      api(`/labels/${id}`, { method: 'PATCH', body: JSON.stringify({ name: n }) }),
-    onSuccess: () => {
-      setEdit(null)
-      done()
+  // One PATCH per row edit (name, color, flag) — optimistic like the old color-editor
+  // recolor: merge the body into the cached list, roll back + toast on error.
+  const patch = useMutation({
+    mutationFn: ({ kind, id, body }: { kind: 'categories' | 'labels'; id: number; body: Record<string, unknown> }) =>
+      api(`/${kind}/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    onMutate: ({ kind, id, body }) => {
+      const key = [kind] as const
+      const prev = qc.getQueryData<Taxon[]>(key)
+      if (prev) qc.setQueryData(key, prev.map((x) => (x.id === id ? { ...x, ...body } : x)))
+      return { key, prev }
     },
-    onError: fail, // keep the editor open so a duplicate-name error can be fixed
+    onError: (e, _v, ctx) => {
+      if (ctx) qc.setQueryData(ctx.key, ctx.prev)
+      fail(e) // a duplicate-name 409 leaves the name editor open with the typed name
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['categories'] })
+      qc.invalidateQueries({ queryKey: ['labels'] })
+    },
   })
   const del = useMutation({
     mutationFn: (id: number) => api(`/labels/${id}`, { method: 'DELETE' }),
     onSuccess: done,
-    onError: fail,
+    onError: fail, // in-use 409: "Label in use by N transactions", verbatim
   })
-  // Blur/Enter commit; Escape drops the edit. No request when the name is unchanged.
-  const commit = () => {
-    if (!edit) return
-    const n = edit.name.trim()
-    if (n && n !== edit.orig) rename.mutate({ id: edit.id, name: n })
-    else setEdit(null)
-  }
 
-  const list = labels.data ?? []
+  const section = (title: string, kind: 'categories' | 'labels', data: Taxon[] | undefined) => (
+    <section className="mt-4 first-of-type:mt-0">
+      <h3 className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">{title}</h3>
+      <div className="space-y-1.5">
+        {(data ?? []).map((item) => (
+          <Row
+            key={item.id}
+            item={item}
+            expanded={expanded?.kind === kind && expanded.id === item.id}
+            onToggle={() =>
+              setExpanded((cur) => (cur?.kind === kind && cur.id === item.id ? null : { kind, id: item.id }))
+            }
+            onPatch={(body) => patch.mutate({ kind, id: item.id, body })}
+            onDelete={() => confirm(`Delete “${item.name}”?`) && del.mutate(item.id)}
+            deleting={del.isPending}
+          />
+        ))}
+        {(data ?? []).length === 0 && <p className="text-sm text-muted-foreground">No {title.toLowerCase()} yet.</p>}
+      </div>
+    </section>
+  )
+
   return (
     <div className="mt-4 space-y-3">
       {labels.isPending && <p className="text-sm text-muted-foreground">Loading…</p>}
       {labels.isError && <p className="text-sm text-destructive">Could not load labels.</p>}
-      {list.length === 0 && !labels.isPending && !labels.isError && (
-        <p className="text-sm text-muted-foreground">No labels yet.</p>
-      )}
-      <ul className="space-y-1">
-        {list.map((l) => (
-          <li key={l.id} className="flex min-h-11 items-center gap-2 rounded-md border bg-card px-3 py-1">
-            {edit && edit.id === l.id ? (
-              <input
-                autoFocus
-                aria-label="Rename label"
-                className={field}
-                maxLength={120}
-                value={edit.name}
-                onChange={(e) => setEdit({ ...edit, name: e.target.value })}
-                onBlur={commit}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') commit()
-                  if (e.key === 'Escape') setEdit(null)
-                }}
-              />
-            ) : (
-              <>
-                {l.color && <span aria-hidden className="size-3 shrink-0 rounded-full" style={{ background: l.color }} />}
-                <button
-                  type="button"
-                  aria-label={`Rename ${l.name}`}
-                  className="min-w-0 flex-1 truncate text-left text-sm font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                  onClick={() => setEdit({ id: l.id, name: l.name, orig: l.name })}
-                >
-                  {l.name}
-                </button>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  className="shrink-0"
-                  aria-label={`Delete ${l.name}`}
-                  disabled={del.isPending}
-                  onClick={() => confirm(`Delete “${l.name}”?`) && del.mutate(l.id)}
-                >
-                  <Trash2 aria-hidden />
-                </Button>
-              </>
-            )}
-          </li>
-        ))}
-      </ul>
+      {section('Spending categories', 'categories', (cats.data ?? []).map((c) => ({ ...c, kind: 'categories' as const })))}
+      {section('Earning categories', 'labels', (labels.data ?? []).map((l) => ({ ...l, kind: 'labels' as const })))}
 
       {adding ? (
         <form
@@ -199,13 +213,13 @@ function LabelsTab() {
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
-          <input
-            type="color"
-            aria-label="Color (optional)"
-            className="mt-2 h-11 w-14 cursor-pointer rounded-md border bg-transparent p-1"
-            value={color || '#000000'}
-            onChange={(e) => setColor(e.target.value)}
-          />
+          <div className="mt-2">
+            <Palette
+              label="Pick a color (optional)"
+              selected={color || null}
+              onPick={(c) => setColor(color === c ? '' : c)} // tap the picked swatch again to clear
+            />
+          </div>
           <Button type="submit" className="mt-3 h-11 w-full" disabled={add.isPending || !name.trim()}>
             Save label
           </Button>
@@ -214,6 +228,97 @@ function LabelsTab() {
         <Button variant="outline" className="h-11 w-full border-dashed" onClick={() => setAdding(true)}>
           <Plus aria-hidden /> Add label
         </Button>
+      )}
+    </div>
+  )
+}
+
+// Collapsed: color dot + name, plus a piggy-bank icon on investment categories.
+// Expanded: the whole edit surface — name, palette, Investment checkbox (categories
+// only; labels have no flag), and (labels only) delete.
+function Row({
+  item,
+  expanded,
+  onToggle,
+  onPatch,
+  onDelete,
+  deleting,
+}: {
+  item: Taxon
+  expanded: boolean
+  onToggle: () => void
+  onPatch: (body: Record<string, unknown>) => void
+  onDelete: () => void
+  deleting: boolean
+}) {
+  const [name, setName] = useState(item.name)
+  // Blur/Enter commits; Escape reverts. No request when the name is unchanged.
+  const commit = () => {
+    const n = name.trim()
+    if (n && n !== item.name) onPatch({ name: n })
+    else setName(item.name)
+  }
+
+  return (
+    <div className="rounded-lg border bg-card">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={onToggle}
+        className="flex min-h-11 w-full items-center gap-2 px-3 py-2 text-left text-sm"
+      >
+        <span
+          aria-hidden
+          className="size-3 shrink-0 rounded-full border border-black/10"
+          style={{ backgroundColor: item.color ?? 'transparent' }}
+        />
+        <span className="min-w-0 flex-1 truncate">{item.name}</span>
+        {item.kind === 'categories' && item.is_investment && (
+          <PiggyBank className="size-3.5 shrink-0 text-muted-foreground" aria-label="Investment" />
+        )}
+      </button>
+      {expanded && (
+        <div className="space-y-2 px-3 pb-3">
+          <input
+            autoFocus
+            aria-label={`Rename ${item.name}`}
+            className={field}
+            maxLength={120}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commit()
+              if (e.key === 'Escape') setName(item.name)
+            }}
+          />
+          <Palette label={`Pick a color for ${item.name}`} selected={item.color} onPick={(color) => onPatch({ color })} />
+          <div className="flex items-center justify-between gap-2">
+            {item.kind === 'categories' ? (
+              // Native checkbox inside the label: the whole row is the tap target (min-h-11).
+              <label className="flex min-h-11 items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="size-5 shrink-0 accent-foreground"
+                  checked={item.is_investment}
+                  onChange={(e) => onPatch({ is_investment: e.target.checked })}
+                />
+                Investment
+              </label>
+            ) : (
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="ml-auto shrink-0"
+                aria-label={`Delete ${item.name}`}
+                disabled={deleting}
+                onClick={onDelete}
+              >
+                <Trash2 aria-hidden />
+              </Button>
+            )}
+          </div>
+        </div>
       )}
     </div>
   )
