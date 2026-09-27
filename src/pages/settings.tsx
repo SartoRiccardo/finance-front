@@ -14,6 +14,7 @@ type Usage = {
   recent: { model: string; input_tokens: number; output_tokens: number; cost_usd: string | null; draft_id: number; created_at: string }[]
 }
 type ApiKey = { id: number; name: string; key_prefix: string; created_at: string; last_used_at: string | null; revoked_at: string | null }
+type LabelRow = { id: number; name: string; is_spending: boolean; color: string | null }
 // The full pf_… key rides only on the POST response — never stored, never fetched again.
 type NewApiKey = ApiKey & { key: string }
 
@@ -79,6 +80,140 @@ function CostsTab() {
             </li>
           ))}
         </ul>
+      )}
+    </div>
+  )
+}
+
+// Same ['labels'] key the transactions page uses, so invalidations keep both fresh.
+// fail() already surfaces the server's detail (duplicate-name 409, in-use 409) verbatim.
+function LabelsTab() {
+  const qc = useQueryClient()
+  const labels = useQuery({ queryKey: ['labels'], queryFn: () => api<LabelRow[]>('/labels') })
+  const [adding, setAdding] = useState(false)
+  const [name, setName] = useState('')
+  // '' = untouched → omitted from the POST.
+  const [color, setColor] = useState('')
+  const [edit, setEdit] = useState<{ id: number; name: string; orig: string } | null>(null)
+
+  const done = () => qc.invalidateQueries({ queryKey: ['labels'] })
+  const add = useMutation({
+    mutationFn: () =>
+      api('/labels', { method: 'POST', body: JSON.stringify({ name: name.trim(), ...(color ? { color } : {}) }) }),
+    onSuccess: () => {
+      setName('')
+      setColor('')
+      setAdding(false)
+      done()
+    },
+    onError: fail,
+  })
+  const rename = useMutation({
+    mutationFn: ({ id, name: n }: { id: number; name: string }) =>
+      api(`/labels/${id}`, { method: 'PATCH', body: JSON.stringify({ name: n }) }),
+    onSuccess: () => {
+      setEdit(null)
+      done()
+    },
+    onError: fail, // keep the editor open so a duplicate-name error can be fixed
+  })
+  const del = useMutation({
+    mutationFn: (id: number) => api(`/labels/${id}`, { method: 'DELETE' }),
+    onSuccess: done,
+    onError: fail,
+  })
+  // Blur/Enter commit; Escape drops the edit. No request when the name is unchanged.
+  const commit = () => {
+    if (!edit) return
+    const n = edit.name.trim()
+    if (n && n !== edit.orig) rename.mutate({ id: edit.id, name: n })
+    else setEdit(null)
+  }
+
+  const list = labels.data ?? []
+  return (
+    <div className="mt-4 space-y-3">
+      {labels.isPending && <p className="text-sm text-muted-foreground">Loading…</p>}
+      {labels.isError && <p className="text-sm text-destructive">Could not load labels.</p>}
+      {list.length === 0 && !labels.isPending && !labels.isError && (
+        <p className="text-sm text-muted-foreground">No labels yet.</p>
+      )}
+      <ul className="space-y-1">
+        {list.map((l) => (
+          <li key={l.id} className="flex min-h-11 items-center gap-2 rounded-md border bg-card px-3 py-1">
+            {edit && edit.id === l.id ? (
+              <input
+                autoFocus
+                aria-label="Rename label"
+                className={field}
+                maxLength={120}
+                value={edit.name}
+                onChange={(e) => setEdit({ ...edit, name: e.target.value })}
+                onBlur={commit}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commit()
+                  if (e.key === 'Escape') setEdit(null)
+                }}
+              />
+            ) : (
+              <>
+                {l.color && <span aria-hidden className="size-3 shrink-0 rounded-full" style={{ background: l.color }} />}
+                <button
+                  type="button"
+                  aria-label={`Rename ${l.name}`}
+                  className="min-w-0 flex-1 truncate text-left text-sm font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  onClick={() => setEdit({ id: l.id, name: l.name, orig: l.name })}
+                >
+                  {l.name}
+                </button>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="shrink-0"
+                  aria-label={`Delete ${l.name}`}
+                  disabled={del.isPending}
+                  onClick={() => confirm(`Delete “${l.name}”?`) && del.mutate(l.id)}
+                >
+                  <Trash2 aria-hidden />
+                </Button>
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+
+      {adding ? (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (name.trim()) add.mutate()
+          }}
+        >
+          <input
+            aria-label="Label name"
+            required
+            maxLength={120}
+            placeholder="e.g. Subscription"
+            autoComplete="off"
+            className={field}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+          <input
+            type="color"
+            aria-label="Color (optional)"
+            className="mt-2 h-11 w-14 cursor-pointer rounded-md border bg-transparent p-1"
+            value={color || '#000000'}
+            onChange={(e) => setColor(e.target.value)}
+          />
+          <Button type="submit" className="mt-3 h-11 w-full" disabled={add.isPending || !name.trim()}>
+            Save label
+          </Button>
+        </form>
+      ) : (
+        <Button variant="outline" className="h-11 w-full border-dashed" onClick={() => setAdding(true)}>
+          <Plus aria-hidden /> Add label
+        </Button>
       )}
     </div>
   )
@@ -217,7 +352,9 @@ function KeysTab() {
 export function SettingsPage() {
   const qc = useQueryClient()
   const settings = useQuery({ queryKey: ['settings'], queryFn: () => api<Settings>('/settings') })
-  const [tab, setTab] = useState<'model' | 'costs' | 'keys'>('model')
+  const [tab, setTab] = useState<'model' | 'labels' | 'keys'>('model')
+  // Chip folder inside the Model tab: rules editor vs costs.
+  const [folder, setFolder] = useState<'rules' | 'costs'>('rules')
   const [q, setQ] = useState('')
   const [search, setSearch] = useState('')
   const [prompts, setPrompts] = useState<string[]>([])
@@ -270,7 +407,7 @@ export function SettingsPage() {
       <p className="mt-1 text-sm text-muted-foreground">Provider and model for receipt extraction.</p>
 
       <div role="radiogroup" aria-label="Settings section" className="mt-3 grid grid-cols-3 rounded-md border p-1">
-        {(['model', 'costs', 'keys'] as const).map((t) => (
+        {(['model', 'labels', 'keys'] as const).map((t) => (
           <button
             key={t}
             type="button"
@@ -282,15 +419,15 @@ export function SettingsPage() {
               tab === t ? 'bg-secondary font-semibold' : 'text-muted-foreground',
             )}
           >
-            {t === 'model' ? 'Model' : t === 'costs' ? 'Costs' : 'Keys'}
+            {t === 'model' ? 'Model' : t === 'labels' ? 'Labels' : 'Keys'}
           </button>
         ))}
       </div>
 
-      {tab === 'costs' ? (
-        <CostsTab />
-      ) : tab === 'keys' ? (
+      {tab === 'keys' ? (
         <KeysTab />
+      ) : tab === 'labels' ? (
+        <LabelsTab />
       ) : (
         <>
           {settings.isPending && <p className="mt-4 text-sm text-muted-foreground">Loading…</p>}
@@ -362,44 +499,66 @@ export function SettingsPage() {
                 )}
               </div>
 
-              <div>
-                <p className="mb-1 text-sm font-medium">Custom rules</p>
-                <p className="mb-2 text-xs text-muted-foreground">
-                  One rule per entry — added to the receipt-reading prompt.
-                </p>
-                <div className="space-y-2">
-                  {prompts.map((rule, i) => (
-                    <div key={i} className="flex items-start gap-1">
-                      <textarea
-                        aria-label={`Rule ${i + 1}`}
-                        className={area}
-                        maxLength={500}
-                        placeholder={i === 0 ? 'e.g. “apple vinegar goes in Self Care (we use it for hair rinses)”' : undefined}
-                        value={rule}
-                        onChange={(e) => setPrompts((rs) => rs.map((r, j) => (j === i ? e.target.value : r)))}
-                        onBlur={() => saveRules(cleanRules(prompts))}
-                      />
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        className="mt-1 shrink-0"
-                        aria-label={`Delete rule ${i + 1}`}
-                        onClick={() => saveRules(prompts.filter((_, j) => j !== i))}
-                      >
-                        <Trash2 aria-hidden />
-                      </Button>
-                    </div>
-                  ))}
-                  <Button
-                    variant="outline"
-                    className="h-11 w-full border-dashed"
-                    disabled={prompts.length >= 20}
-                    onClick={() => setPrompts((rs) => [...rs, ''])}
+              <div role="radiogroup" aria-label="Model tools" className="grid grid-cols-2 rounded-md border p-1">
+                {(['rules', 'costs'] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    role="radio"
+                    aria-checked={folder === f}
+                    onClick={() => setFolder(f)}
+                    className={cn(
+                      'h-8 rounded-sm text-sm font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                      folder === f ? 'bg-secondary font-semibold' : 'text-muted-foreground',
+                    )}
                   >
-                    <Plus aria-hidden /> Add rule
-                  </Button>
-                </div>
+                    {f === 'rules' ? 'Rules' : 'Costs'}
+                  </button>
+                ))}
               </div>
+
+              {folder === 'costs' ? (
+                <CostsTab />
+              ) : (
+                <div>
+                  <p className="mb-1 text-sm font-medium">Custom rules</p>
+                  <p className="mb-2 text-xs text-muted-foreground">
+                    One rule per entry — added to the receipt-reading prompt.
+                  </p>
+                  <div className="space-y-2">
+                    {prompts.map((rule, i) => (
+                      <div key={i} className="flex items-start gap-1">
+                        <textarea
+                          aria-label={`Rule ${i + 1}`}
+                          className={area}
+                          maxLength={500}
+                          placeholder={i === 0 ? 'e.g. “apple vinegar goes in Self Care (we use it for hair rinses)”' : undefined}
+                          value={rule}
+                          onChange={(e) => setPrompts((rs) => rs.map((r, j) => (j === i ? e.target.value : r)))}
+                          onBlur={() => saveRules(cleanRules(prompts))}
+                        />
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className="mt-1 shrink-0"
+                          aria-label={`Delete rule ${i + 1}`}
+                          onClick={() => saveRules(prompts.filter((_, j) => j !== i))}
+                        >
+                          <Trash2 aria-hidden />
+                        </Button>
+                      </div>
+                    ))}
+                    <Button
+                      variant="outline"
+                      className="h-11 w-full border-dashed"
+                      disabled={prompts.length >= 20}
+                      onClick={() => setPrompts((rs) => [...rs, ''])}
+                    >
+                      <Plus aria-hidden /> Add rule
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </>
