@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { Check, Copy, KeyRound } from 'lucide-react'
+import { Check, Copy, KeyRound, Plus, Trash2 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Sheet } from '@/components/ui/sheet'
 
-type Settings = { llm_provider: string; llm_model: string; custom_prompt: string }
+type Settings = { llm_provider: string; llm_model: string; custom_prompts: string[] }
 type ModelInfo = { id: string; name: string; input_cost: number | null; output_cost: number | null }
 type Usage = {
   totals: { calls: number; input_tokens: number; output_tokens: number; cost_usd: string | null }
@@ -31,6 +31,10 @@ const field =
 const area = `${field.replace('h-11 ', '')} min-h-24 py-2`
 
 const fail = (e: unknown) => toast.error(e instanceof Error ? e.message : 'Something went wrong')
+
+// Rules edits strip + drop blanks (the server does the same) so blur compares apples to apples.
+const cleanRules = (rules: string[]) => rules.map((r) => r.trim()).filter(Boolean)
+const sameRules = (a: string[], b: string[]) => JSON.stringify(a) === JSON.stringify(b)
 
 // Per-call cost: "free" when the model was free, "—" when unknown.
 const cost4 = (c: string | null) => (c == null ? '—' : Number(c) === 0 ? 'free' : `$${Number(c).toFixed(4)}`)
@@ -216,11 +220,17 @@ export function SettingsPage() {
   const [tab, setTab] = useState<'model' | 'costs' | 'keys'>('model')
   const [q, setQ] = useState('')
   const [search, setSearch] = useState('')
-  const [prompt, setPrompt] = useState('')
+  const [prompts, setPrompts] = useState<string[]>([])
 
-  // The textarea edits a local copy; settings.data changing (load, refetch) re-syncs it.
+  const saveRules = (rules: string[]) => {
+    setPrompts(rules)
+    if (settings.data && !sameRules(rules, settings.data.custom_prompts))
+      save.mutate({ llm_provider: provider, llm_model: model, custom_prompts: rules })
+  }
+
+  // The rules editor edits a local copy; settings.data changing (load, refetch) re-syncs it.
   useEffect(() => {
-    if (settings.data) setPrompt(settings.data.custom_prompt)
+    if (settings.data) setPrompts(settings.data.custom_prompts)
   }, [settings.data])
 
   // ~300ms debounce: one request per pause in typing, not per keystroke.
@@ -252,7 +262,7 @@ export function SettingsPage() {
 
   // Every save sends all three fields, so no save can silently drop another.
   const pick = (id: string) =>
-    id !== model && save.mutate({ llm_provider: provider, llm_model: id, custom_prompt: prompt })
+    id !== model && save.mutate({ llm_provider: provider, llm_model: id, custom_prompts: cleanRules(prompts) })
 
   return (
     <div className="p-4 pb-24">
@@ -297,7 +307,7 @@ export function SettingsPage() {
                   value={provider}
                   disabled={save.isPending}
                   onChange={(e) =>
-                    save.mutate({ llm_provider: e.target.value, llm_model: model, custom_prompt: prompt })
+                    save.mutate({ llm_provider: e.target.value, llm_model: model, custom_prompts: cleanRules(prompts) })
                   }
                 >
                   <option value="google">Google</option>
@@ -353,21 +363,42 @@ export function SettingsPage() {
               </div>
 
               <div>
-                <label htmlFor="custom-prompt" className="mb-1 block text-sm font-medium">
-                  Custom prompt
-                </label>
-                <textarea
-                  id="custom-prompt"
-                  className={area}
-                  maxLength={2000}
-                  placeholder={'Extra rules for reading receipts — they get added to the prompt, not replacing it.\ne.g. “apple vinegar goes in Self Care (we use it for hair rinses)”'}
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  onBlur={() => {
-                    if (settings.data && prompt !== settings.data.custom_prompt)
-                      save.mutate({ llm_provider: provider, llm_model: model, custom_prompt: prompt })
-                  }}
-                />
+                <p className="mb-1 text-sm font-medium">Custom rules</p>
+                <p className="mb-2 text-xs text-muted-foreground">
+                  One rule per entry — added to the receipt-reading prompt.
+                </p>
+                <div className="space-y-2">
+                  {prompts.map((rule, i) => (
+                    <div key={i} className="flex items-start gap-1">
+                      <textarea
+                        aria-label={`Rule ${i + 1}`}
+                        className={area}
+                        maxLength={500}
+                        placeholder={i === 0 ? 'e.g. “apple vinegar goes in Self Care (we use it for hair rinses)”' : undefined}
+                        value={rule}
+                        onChange={(e) => setPrompts((rs) => rs.map((r, j) => (j === i ? e.target.value : r)))}
+                        onBlur={() => saveRules(cleanRules(prompts))}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        className="mt-1 shrink-0"
+                        aria-label={`Delete rule ${i + 1}`}
+                        onClick={() => saveRules(prompts.filter((_, j) => j !== i))}
+                      >
+                        <Trash2 aria-hidden />
+                      </Button>
+                    </div>
+                  ))}
+                  <Button
+                    variant="outline"
+                    className="h-11 w-full border-dashed"
+                    disabled={prompts.length >= 20}
+                    onClick={() => setPrompts((rs) => [...rs, ''])}
+                  >
+                    <Plus aria-hidden /> Add rule
+                  </Button>
+                </div>
               </div>
             </div>
           )}
