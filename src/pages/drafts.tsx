@@ -1,7 +1,7 @@
 import { useRef, useState, type ChangeEvent } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { Camera, ImagePlus, Loader2, Mail, Pencil, ScanLine, Trash2 } from 'lucide-react'
+import { Camera, ImagePlus, Loader2, Mail, Pencil, ScanLine, TriangleAlert, Trash2 } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
 import { money } from '@/lib/money'
 import { cn } from '@/lib/utils'
@@ -19,6 +19,7 @@ type Draft = {
   error: string | null
   created_at: string
   email_meta: { from: string; date: string; subject: string } | null // null ⇒ photo draft
+  possible_duplicate: boolean
   rows?: DraftRow[]
 }
 type RowValues = { date: string; description: string; amount: string; category_id: string }
@@ -167,7 +168,12 @@ function DraftCard({ draft, rows, onOpen }: { draft: Draft; rows?: DraftRow[]; o
         )}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium">{rows?.[0]?.description || email?.subject || 'Receipt'}</span>
+        <span className="flex min-w-0 items-center gap-1">
+          <span className="min-w-0 truncate text-sm font-medium">{rows?.[0]?.description || email?.subject || 'Receipt'}</span>
+          {draft.possible_duplicate && (
+            <TriangleAlert className="size-4 shrink-0 text-yellow-500" aria-label="Possibly duplicated" />
+          )}
+        </span>
         <span
           className={cn(
             'block text-xs',
