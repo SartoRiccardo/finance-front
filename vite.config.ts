@@ -11,6 +11,11 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
+      workbox: {
+        // navigations to the API (typed URLs, the OAuth callback redirect) must
+        // hit the backend, not the cached SPA shell
+        navigateFallbackDenylist: [/^\/api\//],
+      },
       manifest: {
         name: 'Personal Finance',
         short_name: 'Finance',
