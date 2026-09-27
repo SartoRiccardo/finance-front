@@ -1,0 +1,65 @@
+name: Build frontend
+
+on:
+  push:
+    branches: [main]
+    tags: ['*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm first: setup-node's `cache: pnpm` needs the binary on PATH
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm typecheck
+      - run: pnpm test
+
+      # no build-time secrets: the app only ever calls same-origin relative paths
+      # (/api) since frontend + backend share finance.sarto.dev in prod, so this
+      # build is fully static/reproducible - nothing to inject per-environment.
+      - run: pnpm build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          retention-days: 14
+
+  release:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Zip dist
+        run: (cd dist && zip -qr ../dist.zip .)
+
+      - name: Create release with dist.zip attached
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist.zip
+          generate_release_notes: true
